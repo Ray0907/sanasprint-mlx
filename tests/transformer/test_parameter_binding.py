@@ -4,7 +4,7 @@ import mlx.core as mx
 
 from sanasprint_mlx.transformer.config import SanaTransformerConfig
 from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
-from sanasprint_mlx.transformer.weights import load_mapped_weights_into_denoiser
+from sanasprint_mlx.transformer.weights import load_mapped_weights_into_denoiser, load_scaffold_weights_from_snapshot
 
 
 PATCH_WEIGHT = "mlx_transformer.patch_embed.proj.weight"
@@ -212,3 +212,180 @@ def test_load_mapped_weights_into_scaffold_accepts_real_snapshot_style_unprefixe
 
     assert diagnostics["loaded_keys"] == [PATCH_BIAS]
     np.testing.assert_array_equal(np.array(model.input_bias), np.full((4,), 2.0, dtype=np.float32))
+
+
+def test_load_scaffold_weights_from_snapshot_loads_four_synthetic_projection_tensors(tmp_path):
+    from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    config = tiny_config(hidden_size=4, in_channels=4, out_channels=4)
+    model = SanaTransformerDenoiser(config)
+
+    diagnostics = load_scaffold_weights_from_snapshot(model, snapshot, mlx_dtype=mx.float16)
+
+    assert diagnostics["loaded_keys"] == SCAFFOLD_KEYS
+    assert diagnostics["source_tensors"][PATCH_WEIGHT]["source_key"] == "transformer.patch_embed.proj.weight"
+    assert diagnostics["source_tensors"][PATCH_WEIGHT]["source_shape"] == [4, 4, 1, 1]
+    assert diagnostics["source_tensors"][PATCH_WEIGHT]["final_dtype"] == "float16"
+    assert model.input_weight.dtype == mx.float16
+
+
+def test_load_scaffold_weights_from_snapshot_strict_mode_requires_all_four_keys(tmp_path):
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    transformer_dir = Path(tmp_path) / "snapshot" / "transformer"
+    transformer_dir.mkdir(parents=True)
+    (transformer_dir / "config.json").write_text(
+        """
+{
+  "_class_name": "SanaTransformer2DModel",
+  "num_attention_heads": 2,
+  "attention_head_dim": 2,
+  "in_channels": 4,
+  "out_channels": 4,
+  "num_layers": 1,
+  "caption_channels": 4,
+  "sample_size": 2,
+  "patch_size": 1,
+  "guidance_embeds_scale": 1000.0
+}
+""".strip()
+        + "\n"
+    )
+    save_file(
+        {
+            "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+            "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
+        },
+        transformer_dir / "model.safetensors",
+    )
+    model = SanaTransformerDenoiser(tiny_config(hidden_size=4, in_channels=4, out_channels=4))
+
+    with pytest.raises(KeyError, match=OUT_WEIGHT):
+        load_scaffold_weights_from_snapshot(model, Path(tmp_path) / "snapshot")
+
+
+def test_load_scaffold_weights_from_snapshot_rejects_duplicate_source_tensors(tmp_path):
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    snapshot = Path(tmp_path) / "snapshot"
+    transformer_dir = snapshot / "transformer"
+    transformer_dir.mkdir(parents=True)
+    (transformer_dir / "config.json").write_text(
+        """
+{
+  "_class_name": "SanaTransformer2DModel",
+  "num_attention_heads": 2,
+  "attention_head_dim": 2,
+  "in_channels": 4,
+  "out_channels": 4,
+  "num_layers": 1,
+  "caption_channels": 4,
+  "sample_size": 2,
+  "patch_size": 1,
+  "guidance_embeds_scale": 1000.0
+}
+""".strip()
+        + "\n"
+    )
+    tensors = {
+        "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+        "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
+        "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
+    }
+    save_file(tensors, transformer_dir / "a.safetensors")
+    save_file({"transformer.patch_embed.proj.bias": np.ones((4,), dtype=np.float32)}, transformer_dir / "b.safetensors")
+    model = SanaTransformerDenoiser(tiny_config(hidden_size=4, in_channels=4, out_channels=4))
+
+    with pytest.raises(ValueError, match=f"duplicate scaffold target.*{PATCH_BIAS}"):
+        load_scaffold_weights_from_snapshot(model, snapshot)
+
+
+def test_load_scaffold_weights_from_snapshot_rejects_duplicate_target_aliases(tmp_path):
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    snapshot = Path(tmp_path) / "snapshot"
+    transformer_dir = snapshot / "transformer"
+    transformer_dir.mkdir(parents=True)
+    (transformer_dir / "config.json").write_text(
+        """
+{
+  "_class_name": "SanaTransformer2DModel",
+  "num_attention_heads": 2,
+  "attention_head_dim": 2,
+  "in_channels": 4,
+  "out_channels": 4,
+  "num_layers": 1,
+  "caption_channels": 4,
+  "sample_size": 2,
+  "patch_size": 1,
+  "guidance_embeds_scale": 1000.0
+}
+""".strip()
+        + "\n"
+    )
+    save_file(
+        {
+            "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+            "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
+            "proj_out.weight": np.ones((4, 4), dtype=np.float32),
+            "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
+        },
+        transformer_dir / "model.safetensors",
+    )
+    model = SanaTransformerDenoiser(tiny_config(hidden_size=4, in_channels=4, out_channels=4))
+
+    with pytest.raises(ValueError, match=f"duplicate scaffold target.*{OUT_WEIGHT}"):
+        load_scaffold_weights_from_snapshot(model, snapshot)
+
+
+def test_load_scaffold_weights_from_snapshot_rejects_scaffold_shape_mismatch(tmp_path):
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    snapshot = Path(tmp_path) / "snapshot"
+    transformer_dir = snapshot / "transformer"
+    transformer_dir.mkdir(parents=True)
+    (transformer_dir / "config.json").write_text(
+        """
+{
+  "_class_name": "SanaTransformer2DModel",
+  "num_attention_heads": 2,
+  "attention_head_dim": 2,
+  "in_channels": 4,
+  "out_channels": 4,
+  "num_layers": 1,
+  "caption_channels": 4,
+  "sample_size": 2,
+  "patch_size": 1,
+  "guidance_embeds_scale": 1000.0
+}
+""".strip()
+        + "\n"
+    )
+    save_file(
+        {
+            "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+            "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.proj_out.weight": np.zeros((3, 4), dtype=np.float32),
+            "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
+        },
+        transformer_dir / "model.safetensors",
+    )
+    model = SanaTransformerDenoiser(tiny_config(hidden_size=4, in_channels=4, out_channels=4))
+
+    with pytest.raises(ValueError, match="shape_mismatch"):
+        load_scaffold_weights_from_snapshot(model, snapshot)

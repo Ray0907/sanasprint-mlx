@@ -39,6 +39,47 @@ def test_weights_cli_inspect_writes_json_report(tmp_path):
     assert not [entry for entry in report["mapping"] if entry["status"] == "shape_mismatch"]
 
 
+def test_weights_cli_load_scaffold_writes_json_diagnostics(tmp_path):
+    snapshot = tmp_path / "snapshot"
+    output = tmp_path / "load-scaffold.json"
+    main(["make-synthetic-snapshot", "--output-dir", str(snapshot)])
+
+    result = main(["load-scaffold", "--snapshot", str(snapshot), "--output", str(output), "--dtype", "float16"])
+
+    assert result == 0
+    report = json.loads(output.read_text())
+    assert report["loaded_keys"] == [
+        "mlx_transformer.patch_embed.proj.weight",
+        "mlx_transformer.patch_embed.proj.bias",
+        "mlx_transformer.proj_out.weight",
+        "mlx_transformer.proj_out.bias",
+    ]
+    assert report["source_tensors"]["mlx_transformer.patch_embed.proj.weight"]["source_file"] == "transformer/model.safetensors"
+    assert report["source_tensors"]["mlx_transformer.patch_embed.proj.weight"]["final_dtype"] == "float16"
+
+
+def test_weights_cli_load_scaffold_rejects_remote_snapshot_path(tmp_path):
+    output = tmp_path / "load-scaffold.json"
+
+    with pytest.raises(SystemExit) as error:
+        main(["load-scaffold", "--snapshot", "https://huggingface.co/example/model", "--output", str(output)])
+
+    assert error.value.code == 2
+    assert not output.exists()
+
+
+def test_weights_cli_load_scaffold_rejects_unknown_dtype(tmp_path):
+    snapshot = tmp_path / "snapshot"
+    output = tmp_path / "load-scaffold.json"
+    main(["make-synthetic-snapshot", "--output-dir", str(snapshot)])
+
+    with pytest.raises(SystemExit) as error:
+        main(["load-scaffold", "--snapshot", str(snapshot), "--output", str(output), "--dtype", "int8"])
+
+    assert error.value.code == 2
+    assert not output.exists()
+
+
 def test_weights_cli_requires_local_snapshot_path(tmp_path):
     output = tmp_path / "report.json"
 

@@ -7,6 +7,9 @@ from pathlib import Path
 import numpy as np
 from safetensors.numpy import save_file
 
+from sanasprint_mlx.transformer.config import SanaTransformerConfig
+from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
+from sanasprint_mlx.transformer.weights import load_scaffold_weights_from_snapshot
 from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
 from sanasprint_mlx.weights.inspect import inspect_snapshot
 from sanasprint_mlx.weights.mapping import build_mapping_report
@@ -22,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = subparsers.add_parser("inspect", help="inspect a local safetensors snapshot")
     inspect.add_argument("--snapshot", required=True, type=Path)
     inspect.add_argument("--output", required=True, type=Path)
+
+    load_scaffold = subparsers.add_parser("load-scaffold", help="load scaffold projection weights from a local snapshot")
+    load_scaffold.add_argument("--snapshot", required=True, type=Path)
+    load_scaffold.add_argument("--output", required=True, type=Path)
+    load_scaffold.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="float32")
 
     return parser
 
@@ -42,6 +50,15 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"snapshot path does not exist: {args.snapshot}")
         write_inspection_report(args.snapshot, args.output)
         print(f"wrote weight inspection report: {args.output}")
+        return 0
+
+    if args.command == "load-scaffold":
+        if _looks_remote(args.snapshot):
+            parser.error("--snapshot must be a local path, not a remote URL")
+        if not args.snapshot.exists():
+            parser.error(f"snapshot path does not exist: {args.snapshot}")
+        write_scaffold_load_report(args.snapshot, args.output, dtype=args.dtype)
+        print(f"wrote scaffold load report: {args.output}")
         return 0
 
     parser.error(f"unknown command: {args.command}")
@@ -78,6 +95,8 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         {
             "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
             "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
+            "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
             "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
             "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
         },
@@ -106,6 +125,38 @@ def write_inspection_report(snapshot: str | Path, output: str | Path) -> Path:
     output_path = Path(output)
     output_path.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n")
     return output_path
+
+
+def write_scaffold_load_report(snapshot: str | Path, output: str | Path, *, dtype: str = "float32") -> Path:
+    snapshot_path = Path(snapshot)
+    summary = summarize_transformer_config(load_transformer_config(snapshot_path))
+    config = SanaTransformerConfig(
+        hidden_size=summary.hidden_size,
+        in_channels=summary.in_channels,
+        out_channels=summary.out_channels,
+        caption_channels=summary.caption_channels,
+        num_layers=summary.num_layers,
+        num_attention_heads=summary.num_attention_heads,
+        attention_head_dim=summary.attention_head_dim,
+        patch_size=summary.patch_size,
+        sample_size=summary.sample_size,
+        guidance_embeds_scale=summary.guidance_embeds_scale,
+    )
+    model = SanaTransformerDenoiser(config)
+    diagnostics = load_scaffold_weights_from_snapshot(model, snapshot_path, mlx_dtype=_mlx_dtype(dtype), strict=True)
+    output_path = Path(output)
+    output_path.write_text(json.dumps(diagnostics, indent=2, sort_keys=True) + "\n")
+    return output_path
+
+
+def _mlx_dtype(dtype: str):
+    import mlx.core as mx
+
+    return {
+        "float32": mx.float32,
+        "float16": mx.float16,
+        "bfloat16": mx.bfloat16,
+    }[dtype]
 
 
 def _looks_remote(path: Path) -> bool:

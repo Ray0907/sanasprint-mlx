@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from sanasprint_mlx.transformer.model import SCAFFOLD_PARAMETER_KEYS
+from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
+from sanasprint_mlx.weights.inspect import inspect_snapshot
+from sanasprint_mlx.weights.mapping import build_mapping_report
+from sanasprint_mlx.weights.safetensors_reader import read_selected_tensors
 
 
 UNSAFE_STATUSES = {"requires_review", "missing", "unexpected", "shape_mismatch"}
@@ -124,10 +129,111 @@ def load_mapped_weights_into_denoiser(
         output_backend="mlx",
         mlx_dtype=mlx_dtype,
     )
-    loaded_parameters = {key: loaded[key] for key in scaffold_keys if key in {entry.get("target_key") for entry in selected_entries}}
+    selected_target_keys = {entry.get("target_key") for entry in selected_entries}
+    loaded_parameters = {key: loaded[key] for key in scaffold_keys if key in selected_target_keys}
     model.load_parameters(loaded_parameters, strict=strict)
     loaded_keys = [key for key in SCAFFOLD_PARAMETER_KEYS if key in loaded_parameters]
     return {"loaded_keys": loaded_keys, "ignored_entry_count": ignored_entry_count}
+
+
+def load_scaffold_weights_from_snapshot(
+    model,
+    snapshot_path: str | Path,
+    *,
+    mlx_dtype=None,
+    strict: bool = True,
+) -> dict:
+    snapshot = Path(snapshot_path)
+    config_summary = summarize_transformer_config(load_transformer_config(snapshot)).__dict__
+    tensor_infos = inspect_snapshot(snapshot)
+    report = build_mapping_report(tensor_infos, snapshot_path=str(snapshot), config_summary=config_summary)
+    report_dict = report.to_dict()
+    for entry in report_dict["mapping"]:
+        if entry.get("status") in UNSAFE_STATUSES and _is_scaffold_relevant_entry(entry):
+            raise ValueError(f"unsafe scaffold mapping entry status: {entry.get('status')}")
+    selected_entries = [
+        entry
+        for entry in report_dict["mapping"]
+        if entry.get("status") == "mapped" and entry.get("target_key") in set(SCAFFOLD_PARAMETER_KEYS)
+    ]
+    _reject_duplicate_scaffold_targets(selected_entries)
+    if strict:
+        selected_targets = {entry.get("target_key") for entry in selected_entries}
+        missing_targets = [key for key in SCAFFOLD_PARAMETER_KEYS if key not in selected_targets]
+        if missing_targets:
+            raise KeyError(missing_targets[0])
+
+    source_tensors, source_metadata = _read_scaffold_source_tensors(snapshot, tensor_infos, selected_entries)
+    diagnostics = load_mapped_weights_into_denoiser(
+        model,
+        source_tensors,
+        report_dict,
+        mlx_dtype=mlx_dtype,
+        strict=strict,
+    )
+    parameters = model.parameters()
+    diagnostics.update(
+        {
+            "snapshot_path": str(snapshot),
+            "source_tensors": _source_tensor_diagnostics(source_metadata, parameters),
+        }
+    )
+    return diagnostics
+
+
+def _read_scaffold_source_tensors(snapshot: Path, tensor_infos, selected_entries: list[dict]) -> tuple[dict, dict]:
+    infos_by_key: dict[str, list] = {}
+    for info in tensor_infos:
+        if info.component == "transformer":
+            infos_by_key.setdefault(info.name, []).append(info)
+
+    source_tensors = {}
+    source_metadata = {}
+    for entry in selected_entries:
+        source_key = entry["source_key"]
+        matching_infos = infos_by_key.get(source_key, [])
+        if len(matching_infos) != 1:
+            raise ValueError(f"ambiguous or missing source tensor for {source_key}: {len(matching_infos)} matches")
+        info = matching_infos[0]
+        file_path = snapshot / info.file
+        decoded = read_selected_tensors(file_path, [source_key])[source_key]
+        source_tensors[source_key] = decoded.array
+        source_metadata[entry["target_key"]] = {
+            "source_key": source_key,
+            "target_key": entry["target_key"],
+            "source_file": info.file,
+            "source_dtype": decoded.source_dtype,
+            "decoded_dtype": decoded.decoded_dtype,
+            "source_shape": decoded.source_shape,
+        }
+    return source_tensors, source_metadata
+
+
+def _reject_duplicate_scaffold_targets(selected_entries: list[dict]) -> None:
+    counts: dict[str, int] = {}
+    for entry in selected_entries:
+        target_key = entry["target_key"]
+        counts[target_key] = counts.get(target_key, 0) + 1
+    duplicates = [key for key in SCAFFOLD_PARAMETER_KEYS if counts.get(key, 0) > 1]
+    if duplicates:
+        raise ValueError(f"duplicate scaffold target mapping: {duplicates[0]}")
+
+
+def _source_tensor_diagnostics(source_metadata: dict, parameters: dict) -> dict:
+    diagnostics = {}
+    for key in SCAFFOLD_PARAMETER_KEYS:
+        if key not in source_metadata:
+            continue
+        value = dict(source_metadata[key])
+        parameter = parameters[key]
+        value["target_shape"] = [int(dim) for dim in parameter.shape]
+        value["final_dtype"] = _dtype_name(parameter.dtype)
+        diagnostics[key] = value
+    return diagnostics
+
+
+def _dtype_name(dtype) -> str:
+    return str(dtype).removeprefix("mlx.core.")
 
 
 def _is_scaffold_relevant_entry(entry: dict) -> bool:

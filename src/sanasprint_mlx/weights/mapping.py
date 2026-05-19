@@ -210,6 +210,7 @@ def _target_key(source_key: str) -> str:
 def _expected_shape(source_key: str, config_summary: dict) -> list[int] | None:
     hidden_size = config_summary.get("hidden_size")
     in_channels = config_summary.get("in_channels")
+    out_channels = config_summary.get("out_channels")
     patch_size = config_summary.get("patch_size", 1)
     normalized_key = source_key.removeprefix("transformer.")
     if normalized_key == "patch_embed.proj.weight" and hidden_size is not None and in_channels is not None:
@@ -217,6 +218,12 @@ def _expected_shape(source_key: str, config_summary: dict) -> list[int] | None:
         return [int(hidden_size), int(in_channels), patch_size, patch_size]
     if normalized_key == "patch_embed.proj.bias" and hidden_size is not None:
         return [int(hidden_size)]
+    if normalized_key == "proj_out.weight" and hidden_size is not None and out_channels is not None:
+        patch_size = int(patch_size)
+        return [int(out_channels) * patch_size * patch_size, int(hidden_size)]
+    if normalized_key == "proj_out.bias" and out_channels is not None:
+        patch_size = int(patch_size)
+        return [int(out_channels) * patch_size * patch_size]
     return None
 
 

@@ -13,6 +13,8 @@ def infos():
     return [
         TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.bias", [4], "F32", 4, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer.proj_out.weight", [3, 4], "F32", 12, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer.proj_out.bias", [3], "F32", 3, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.transformer_blocks.0.attn1.to_q.weight", [4, 4], "F32", 16, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.transformer_blocks.0.ff.net.0.proj.weight", [8, 4], "F32", 32, "transformer"),
         TensorInfo("text_encoder/model.safetensors", "text_encoder.embed_tokens.weight", [10, 4], "F16", 40, "text_encoder"),
@@ -97,6 +99,32 @@ def test_mapper_uses_patch_size_for_patch_embed_shape():
     assert entry.status == "mapped"
 
 
+def test_mapper_validates_proj_out_shape_from_config_summary():
+    report = build_mapping_report(
+        infos(),
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "in_channels": 3, "out_channels": 3, "patch_size": 1},
+    )
+
+    mapped = {entry.source_key: entry for entry in report.mapping if entry.status == "mapped"}
+
+    assert mapped["transformer.proj_out.weight"].target_key == "mlx_transformer.proj_out.weight"
+    assert mapped["transformer.proj_out.bias"].target_key == "mlx_transformer.proj_out.bias"
+
+
+def test_mapper_reports_proj_out_shape_mismatch_from_config_summary():
+    report = build_mapping_report(
+        infos(),
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "in_channels": 3, "out_channels": 5, "patch_size": 1},
+    )
+
+    mismatches = {entry.source_key: entry for entry in report.mapping if entry.status == "shape_mismatch"}
+
+    assert mismatches["transformer.proj_out.weight"].source_shape == [3, 4]
+    assert mismatches["transformer.proj_out.bias"].source_shape == [3]
+
+
 def test_mapper_required_patterns_accept_transformer_file_keys_without_transformer_prefix():
     tensor_infos = [
         TensorInfo("transformer/model.safetensors", "patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "transformer"),
@@ -164,7 +192,7 @@ def test_component_summary_groups_text_encoder_transformer_and_vae():
 
     assert summaries["text_encoder"].parameter_count == 40
     assert summaries["text_encoder"].parameter_count_by_dtype == {"F16": 40}
-    assert summaries["transformer"].tensor_count == 4
+    assert summaries["transformer"].tensor_count == 6
     assert summaries["vae"].largest_tensors[0]["name"] == "decoder.conv.weight"
     assert summaries["unknown"].parameter_count == 4
 
@@ -177,5 +205,5 @@ def test_mapping_report_serializes_to_json():
     decoded = json.loads(encoded)
 
     assert decoded["schema_version"] == 1
-    assert decoded["components"]["transformer"]["parameter_count"] == 64
+    assert decoded["components"]["transformer"]["parameter_count"] == 79
     assert decoded["mapping"]
