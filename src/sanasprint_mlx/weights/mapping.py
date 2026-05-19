@@ -210,18 +210,21 @@ def _target_key(source_key: str) -> str:
 def _expected_shape(source_key: str, config_summary: dict) -> list[int] | None:
     hidden_size = config_summary.get("hidden_size")
     in_channels = config_summary.get("in_channels")
-    if source_key == "transformer.patch_embed.proj.weight" and hidden_size is not None and in_channels is not None:
-        return [int(hidden_size), int(in_channels)]
-    if source_key == "transformer.patch_embed.proj.bias" and hidden_size is not None:
+    patch_size = config_summary.get("patch_size", 1)
+    normalized_key = source_key.removeprefix("transformer.")
+    if normalized_key == "patch_embed.proj.weight" and hidden_size is not None and in_channels is not None:
+        patch_size = int(patch_size)
+        return [int(hidden_size), int(in_channels), patch_size, patch_size]
+    if normalized_key == "patch_embed.proj.bias" and hidden_size is not None:
         return [int(hidden_size)]
     return None
 
 
 def _missing_entries(tensor_infos: list[TensorInfo]) -> list[MappingEntry]:
-    keys = [info.name for info in tensor_infos]
+    transformer_infos = [info for info in tensor_infos if info.component == "transformer"]
     entries = []
     for rule, pattern in REQUIRED_PATTERNS.items():
-        if not any(key.startswith(pattern) for key in keys):
+        if not any(_matches_required_pattern(info.name, pattern) for info in transformer_infos):
             entries.append(
                 MappingEntry(
                     source_key=f"{pattern}*",
@@ -240,9 +243,9 @@ def _missing_entries(tensor_infos: list[TensorInfo]) -> list[MappingEntry]:
 
 def _diagnostics(tensor_infos: list[TensorInfo], mapping: list[MappingEntry]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
-    keys = [info.name for info in tensor_infos]
+    transformer_infos = [info for info in tensor_infos if info.component == "transformer"]
     for rule, pattern in REQUIRED_PATTERNS.items():
-        if not any(key.startswith(pattern) for key in keys):
+        if not any(_matches_required_pattern(info.name, pattern) for info in transformer_infos):
             diagnostics.append(
                 Diagnostic(
                     severity="error",
@@ -271,3 +274,11 @@ def _diagnostics(tensor_infos: list[TensorInfo], mapping: list[MappingEntry]) ->
                 )
             )
     return diagnostics
+
+
+def _matches_required_pattern(key: str, pattern: str) -> bool:
+    if key.startswith(pattern):
+        return True
+    if pattern.startswith("transformer.") and key.startswith(pattern.removeprefix("transformer.")):
+        return True
+    return False

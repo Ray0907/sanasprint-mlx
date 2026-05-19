@@ -11,7 +11,7 @@ from sanasprint_mlx.weights.mapping import (
 
 def infos():
     return [
-        TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.weight", [4, 3], "F32", 12, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.bias", [4], "F32", 4, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.transformer_blocks.0.attn1.to_q.weight", [4, 4], "F32", 16, "transformer"),
         TensorInfo("transformer/model.safetensors", "transformer.transformer_blocks.0.ff.net.0.proj.weight", [8, 4], "F32", 32, "transformer"),
@@ -57,14 +57,78 @@ def test_mapper_reports_shape_mismatch_from_config_summary():
     report = build_mapping_report(
         infos(),
         snapshot_path="/tmp/snapshot",
-        config_summary={"hidden_size": 4, "in_channels": 5},
+        config_summary={"hidden_size": 4, "in_channels": 5, "patch_size": 1},
     )
 
     mismatch = [entry for entry in report.mapping if entry.status == "shape_mismatch"][0]
 
     assert mismatch.source_key == "transformer.patch_embed.proj.weight"
-    assert mismatch.source_shape == [4, 3]
+    assert mismatch.source_shape == [4, 3, 1, 1]
     assert mismatch.suggested_action == "verify config dimensions or update the mapping rule"
+
+
+def test_mapper_accepts_4d_patch_embed_shape_from_config_summary():
+    report = build_mapping_report(
+        infos(),
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "in_channels": 3, "patch_size": 1},
+    )
+
+    entry = [entry for entry in report.mapping if entry.source_key == "transformer.patch_embed.proj.weight"][0]
+
+    assert entry.status == "mapped"
+    assert entry.target_key == "mlx_transformer.patch_embed.proj.weight"
+
+
+def test_mapper_uses_patch_size_for_patch_embed_shape():
+    tensor_infos = [
+        TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.weight", [4, 3, 2, 2], "F32", 48, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer.patch_embed.proj.bias", [4], "F32", 4, "transformer"),
+    ]
+
+    report = build_mapping_report(
+        tensor_infos,
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "in_channels": 3, "patch_size": 2},
+    )
+
+    entry = [entry for entry in report.mapping if entry.source_key == "transformer.patch_embed.proj.weight"][0]
+
+    assert entry.status == "mapped"
+
+
+def test_mapper_required_patterns_accept_transformer_file_keys_without_transformer_prefix():
+    tensor_infos = [
+        TensorInfo("transformer/model.safetensors", "patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "transformer"),
+        TensorInfo("transformer/model.safetensors", "patch_embed.proj.bias", [4], "F32", 4, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer_blocks.0.attn1.to_q.weight", [4, 4], "F32", 16, "transformer"),
+    ]
+
+    report = build_mapping_report(
+        tensor_infos,
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "in_channels": 3, "patch_size": 1},
+    )
+
+    missing_entries = [entry for entry in report.mapping if entry.status == "missing"]
+
+    assert missing_entries == []
+
+
+def test_mapper_required_patterns_ignore_unprefixed_keys_from_non_transformer_components():
+    tensor_infos = [
+        TensorInfo("misc/model.safetensors", "patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "unknown"),
+        TensorInfo("misc/model.safetensors", "transformer_blocks.0.attn1.to_q.weight", [4, 4], "F32", 16, "unknown"),
+    ]
+
+    report = build_mapping_report(tensor_infos, snapshot_path="/tmp/snapshot")
+
+    missing_entries = [entry for entry in report.mapping if entry.status == "missing"]
+
+    assert {entry.source_key for entry in missing_entries} == {
+        "transformer.patch_embed.*",
+        "transformer.transformer_blocks.*",
+    }
 
 
 def test_mapper_marks_transpose_sensitive_keys_for_review():

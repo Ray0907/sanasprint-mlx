@@ -76,7 +76,7 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
     )
     save_file(
         {
-            "transformer.patch_embed.proj.weight": np.zeros((4, 4), dtype=np.float32),
+            "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
             "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
             "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
             "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),

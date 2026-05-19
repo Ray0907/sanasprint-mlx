@@ -9,6 +9,18 @@ from sanasprint_mlx.transformer.config import SanaTransformerConfig
 from sanasprint_mlx.transformer.debug import DebugCapture
 
 
+PATCH_EMBED_WEIGHT_KEY = "mlx_transformer.patch_embed.proj.weight"
+PATCH_EMBED_BIAS_KEY = "mlx_transformer.patch_embed.proj.bias"
+PROJ_OUT_WEIGHT_KEY = "mlx_transformer.proj_out.weight"
+PROJ_OUT_BIAS_KEY = "mlx_transformer.proj_out.bias"
+SCAFFOLD_PARAMETER_KEYS = (
+    PATCH_EMBED_WEIGHT_KEY,
+    PATCH_EMBED_BIAS_KEY,
+    PROJ_OUT_WEIGHT_KEY,
+    PROJ_OUT_BIAS_KEY,
+)
+
+
 class SanaTransformerDenoiser:
     def __init__(self, config: SanaTransformerConfig):
         config.validate()
@@ -18,6 +30,55 @@ class SanaTransformerDenoiser:
         self.input_bias = mx.zeros((config.hidden_size,))
         self.output_weight = mx.ones((config.out_channels * config.patch_size * config.patch_size, config.hidden_size))
         self.output_bias = mx.zeros((config.out_channels * config.patch_size * config.patch_size,))
+
+    def parameters(self) -> dict:
+        patch_shape = (
+            self.config.hidden_size,
+            self.config.in_channels,
+            self.config.patch_size,
+            self.config.patch_size,
+        )
+        return {
+            PATCH_EMBED_WEIGHT_KEY: mx.array(self.input_weight.reshape(patch_shape)),
+            PATCH_EMBED_BIAS_KEY: mx.array(self.input_bias),
+            PROJ_OUT_WEIGHT_KEY: mx.array(self.output_weight),
+            PROJ_OUT_BIAS_KEY: mx.array(self.output_bias),
+        }
+
+    def load_parameters(self, parameters: dict, *, strict: bool = True) -> None:
+        expected_shapes = self._external_parameter_shapes()
+        unknown = [key for key in parameters if key not in expected_shapes]
+        if unknown:
+            raise KeyError(unknown[0])
+        if strict:
+            missing = [key for key in SCAFFOLD_PARAMETER_KEYS if key not in parameters]
+            if missing:
+                raise KeyError(missing[0])
+
+        for key in SCAFFOLD_PARAMETER_KEYS:
+            if key not in parameters:
+                continue
+            value = mx.array(parameters[key])
+            expected_shape = expected_shapes[key]
+            if tuple(value.shape) != expected_shape:
+                raise ValueError(f"{key}: expected shape {expected_shape}, got {tuple(value.shape)}")
+            if key == PATCH_EMBED_WEIGHT_KEY:
+                self.input_weight = value.reshape(self.input_weight.shape)
+            elif key == PATCH_EMBED_BIAS_KEY:
+                self.input_bias = value
+            elif key == PROJ_OUT_WEIGHT_KEY:
+                self.output_weight = value
+            elif key == PROJ_OUT_BIAS_KEY:
+                self.output_bias = value
+
+    def _external_parameter_shapes(self) -> dict[str, tuple[int, ...]]:
+        patch_size = self.config.patch_size
+        return {
+            PATCH_EMBED_WEIGHT_KEY: (self.config.hidden_size, self.config.in_channels, patch_size, patch_size),
+            PATCH_EMBED_BIAS_KEY: (self.config.hidden_size,),
+            PROJ_OUT_WEIGHT_KEY: (self.config.out_channels * patch_size * patch_size, self.config.hidden_size),
+            PROJ_OUT_BIAS_KEY: (self.config.out_channels * patch_size * patch_size,),
+        }
 
     def __call__(
         self,

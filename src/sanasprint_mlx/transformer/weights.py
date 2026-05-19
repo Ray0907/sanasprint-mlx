@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from sanasprint_mlx.transformer.model import SCAFFOLD_PARAMETER_KEYS
+
 
 UNSAFE_STATUSES = {"requires_review", "missing", "unexpected", "shape_mismatch"}
 OutputBackend = Literal["native", "mlx"]
@@ -89,3 +91,61 @@ def _validate_target_shape(value, target_tensor, entry: dict) -> None:
             f"shape mismatch for {entry.get('source_key')} -> {entry.get('target_key')}: "
             f"got {tuple(value.shape)}, expected {tuple(target_shape)}"
         )
+
+
+def load_mapped_weights_into_denoiser(
+    model,
+    source_tensors: dict,
+    mapping_report: dict,
+    *,
+    mlx_dtype=None,
+    strict: bool = False,
+) -> dict:
+    scaffold_keys = set(SCAFFOLD_PARAMETER_KEYS)
+    selected_entries = []
+    ignored_entry_count = 0
+    for entry in mapping_report.get("mapping", []):
+        status = entry.get("status")
+        if status in UNSAFE_STATUSES:
+            if _is_scaffold_relevant_entry(entry):
+                raise ValueError(f"unsafe scaffold mapping entry status: {status}")
+            ignored_entry_count += 1
+            continue
+
+        if entry.get("target_key") in scaffold_keys:
+            selected_entries.append(entry)
+        else:
+            ignored_entry_count += 1
+
+    loaded = load_mapped_weights(
+        model.parameters(),
+        source_tensors,
+        {"mapping": selected_entries},
+        output_backend="mlx",
+        mlx_dtype=mlx_dtype,
+    )
+    loaded_parameters = {key: loaded[key] for key in scaffold_keys if key in {entry.get("target_key") for entry in selected_entries}}
+    model.load_parameters(loaded_parameters, strict=strict)
+    loaded_keys = [key for key in SCAFFOLD_PARAMETER_KEYS if key in loaded_parameters]
+    return {"loaded_keys": loaded_keys, "ignored_entry_count": ignored_entry_count}
+
+
+def _is_scaffold_relevant_entry(entry: dict) -> bool:
+    target_key = entry.get("target_key")
+    source_key = entry.get("source_key")
+    if isinstance(target_key, str) and _matches_any_prefix_or_wildcard(
+        target_key,
+        ("mlx_transformer.patch_embed.", "mlx_transformer.proj_out."),
+    ):
+        return True
+    if isinstance(source_key, str) and _matches_any_prefix_or_wildcard(
+        source_key,
+        ("transformer.patch_embed.", "patch_embed.", "transformer.proj_out.", "proj_out."),
+    ):
+        return True
+    return False
+
+
+def _matches_any_prefix_or_wildcard(value: str, prefixes: tuple[str, ...]) -> bool:
+    normalized = value.removesuffix("*")
+    return any(normalized.startswith(prefix) or prefix.startswith(normalized) for prefix in prefixes)

@@ -36,6 +36,7 @@ def test_weights_cli_inspect_writes_json_report(tmp_path):
     assert report["schema_version"] == 1
     assert report["components"]["transformer"]["parameter_count"] > 0
     assert report["mapping"]
+    assert not [entry for entry in report["mapping"] if entry["status"] == "shape_mismatch"]
 
 
 def test_weights_cli_requires_local_snapshot_path(tmp_path):
