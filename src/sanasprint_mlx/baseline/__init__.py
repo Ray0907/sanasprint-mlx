@@ -2,6 +2,7 @@
 
 from sanasprint_mlx.baseline.schema import (
     validate_approved_baseline_manifest,
+    validate_benchmark_comparison_manifest,
     validate_manifest_file,
     validate_promotion_manifest,
     validate_raw_benchmark_manifest,
@@ -9,6 +10,7 @@ from sanasprint_mlx.baseline.schema import (
 
 __all__ = [
     "validate_approved_baseline_manifest",
+    "validate_benchmark_comparison_manifest",
     "validate_manifest_file",
     "validate_promotion_manifest",
     "validate_raw_benchmark_manifest",

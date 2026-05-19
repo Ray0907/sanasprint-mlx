@@ -4,6 +4,7 @@ import pytest
 
 from sanasprint_mlx.baseline.schema import (
     validate_approved_baseline_manifest,
+    validate_benchmark_comparison_manifest,
     validate_manifest_file,
     validate_promotion_manifest,
     validate_raw_benchmark_manifest,
@@ -155,6 +156,52 @@ def promotion_manifest():
     }
 
 
+def comparison_manifest():
+    return {
+        "schema_version": 1,
+        "manifest_type": "benchmark_comparison",
+        "created_at": "2026-05-19T00:00:00Z",
+        "inputs": {
+            "cold": {"path": "/tmp/cold.json", "sha256": "sha256:" + "a" * 64},
+            "warm": {"path": "/tmp/warm.json", "sha256": "sha256:" + "b" * 64},
+        },
+        "compatibility": {
+            "status": "PASS",
+            "checked_fields": [
+                "model.repo",
+                "model.revision",
+                "generation.prompt_hash",
+                "generation.seed",
+                "generation.width",
+                "generation.height",
+                "generation.steps",
+                "runtime.engine",
+                "runtime.dtype",
+                "runtime.device",
+                "runtime.low_memory",
+                "environment.machine",
+                "environment.os_version",
+                "environment.python_version",
+                "environment.torch_version",
+                "environment.diffusers_version",
+            ],
+        },
+        "metrics": {
+            "cold_seconds_per_image": 40.0,
+            "warm_amortized_seconds_per_image": 20.0,
+            "warm_amortized_speedup_ratio": 2.0,
+            "seconds_saved_per_image": 20.0,
+            "warm_total_wall_time_seconds": 40.0,
+            "warm_output_count": 2,
+            "max_rss_bytes_delta": 10,
+            "peak_footprint_bytes_delta": -5,
+            "basis": "cold.summary.wall_time_seconds.median / warm.summary.amortized_wall_time_seconds_per_output.median",
+        },
+        "conclusion": "warm_faster",
+        "claim_scope": "diffusers_warm_persistence_only_not_mlx_native",
+    }
+
+
 def test_valid_raw_manifest_passes():
     data = raw_manifest()
 
@@ -240,6 +287,36 @@ def test_valid_promotion_manifest_passes():
     data = promotion_manifest()
 
     assert validate_promotion_manifest(data) is data
+
+
+def test_valid_benchmark_comparison_manifest_passes():
+    data = comparison_manifest()
+
+    assert validate_benchmark_comparison_manifest(data) is data
+
+
+def test_benchmark_comparison_rejects_nan_metric():
+    data = comparison_manifest()
+    data["metrics"]["warm_amortized_speedup_ratio"] = float("nan")
+
+    with pytest.raises(ValueError, match="warm_amortized_speedup_ratio"):
+        validate_benchmark_comparison_manifest(data)
+
+
+def test_benchmark_comparison_rejects_non_hex_digest():
+    data = comparison_manifest()
+    data["inputs"]["cold"]["sha256"] = "sha256:" + "g" * 64
+
+    with pytest.raises(ValueError, match="sha256"):
+        validate_benchmark_comparison_manifest(data)
+
+
+def test_raw_manifest_rejects_nan_numeric_field():
+    data = raw_manifest()
+    data["summary"]["wall_time_seconds"]["median"] = float("nan")
+
+    with pytest.raises(ValueError, match="median"):
+        validate_raw_benchmark_manifest(data)
 
 
 def test_missing_required_field_names_field():
@@ -402,6 +479,13 @@ def test_validate_manifest_file_supports_approved_and_promotion(tmp_path):
 
     assert validate_manifest_file(approved, "approved_baseline")["manifest_type"] == "approved_baseline"
     assert validate_manifest_file(promotion, "promotion")["manifest_type"] == "promotion"
+
+
+def test_validate_manifest_file_supports_benchmark_comparison(tmp_path):
+    comparison = tmp_path / "comparison.json"
+    comparison.write_text(json.dumps(comparison_manifest()))
+
+    assert validate_manifest_file(comparison, "benchmark_comparison")["manifest_type"] == "benchmark_comparison"
 
 
 def test_validate_manifest_file_rejects_unsupported_kind(tmp_path):

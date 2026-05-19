@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,6 +15,26 @@ DTYPES = {"bfloat16", "float16", "float32", "int8", "int4"}
 PASS_FAIL = {"PASS", "FAIL"}
 FLOAT_TOLERANCE = 1e-9
 ALLOWED_ARTIFACT_PREFIXES = {"benchmark-runs", ".benchmarks", "raw-benchmarks"}
+COMPARISON_CHECKED_FIELDS = [
+    "model.repo",
+    "model.revision",
+    "generation.prompt_hash",
+    "generation.seed",
+    "generation.width",
+    "generation.height",
+    "generation.steps",
+    "runtime.engine",
+    "runtime.dtype",
+    "runtime.device",
+    "runtime.low_memory",
+    "environment.machine",
+    "environment.os_version",
+    "environment.python_version",
+    "environment.torch_version",
+    "environment.diffusers_version",
+]
+COMPARISON_CLAIM_SCOPE = "diffusers_warm_persistence_only_not_mlx_native"
+COMPARISON_BASIS = "cold.summary.wall_time_seconds.median / warm.summary.amortized_wall_time_seconds_per_output.median"
 
 
 def validate_raw_benchmark_manifest(data: dict) -> dict:
@@ -68,6 +89,32 @@ def validate_promotion_manifest(data: dict) -> dict:
     return data
 
 
+def validate_benchmark_comparison_manifest(data: dict) -> dict:
+    _object_data(
+        data,
+        "manifest",
+        required={
+            "schema_version",
+            "manifest_type",
+            "created_at",
+            "inputs",
+            "compatibility",
+            "metrics",
+            "conclusion",
+            "claim_scope",
+        },
+    )
+    _schema_version(data)
+    _literal(data, "manifest_type", "benchmark_comparison")
+    _non_empty_string(data, "created_at")
+    _validate_comparison_inputs(data)
+    _validate_comparison_compatibility(data)
+    _validate_comparison_metrics(data)
+    _enum(data, "conclusion", {"warm_faster", "warm_slower_or_equal"})
+    _literal(data, "claim_scope", COMPARISON_CLAIM_SCOPE)
+    return data
+
+
 def validate_manifest_file(path: str | Path, kind: str) -> dict:
     try:
         data = json.loads(Path(path).read_text())
@@ -81,7 +128,65 @@ def validate_manifest_file(path: str | Path, kind: str) -> dict:
         return validate_approved_baseline_manifest(data)
     if kind == "promotion":
         return validate_promotion_manifest(data)
+    if kind == "benchmark_comparison":
+        return validate_benchmark_comparison_manifest(data)
     raise ValueError(f"unsupported manifest kind: {kind}")
+
+
+def _validate_comparison_inputs(data: dict) -> None:
+    inputs = _object(data, "inputs", required={"cold", "warm"})
+    for key in ("cold", "warm"):
+        item = _object(inputs, key, required={"path", "sha256"})
+        _non_empty_string(item, "path")
+        digest = _non_empty_string(item, "sha256")
+        hex_digest = digest.removeprefix("sha256:")
+        if (
+            not digest.startswith("sha256:")
+            or len(hex_digest) != 64
+            or any(character not in "0123456789abcdef" for character in hex_digest)
+        ):
+            raise ValueError(f"inputs.{key}.sha256 must be a sha256 digest")
+
+
+def _validate_comparison_compatibility(data: dict) -> None:
+    compatibility = _object(data, "compatibility", required={"status", "checked_fields"})
+    _literal(compatibility, "status", "PASS", prefix="compatibility.")
+    checked_fields = _list(compatibility, "checked_fields")
+    if checked_fields != COMPARISON_CHECKED_FIELDS:
+        raise ValueError("compatibility.checked_fields must match the benchmark comparison contract")
+
+
+def _validate_comparison_metrics(data: dict) -> None:
+    metrics = _object(
+        data,
+        "metrics",
+        required={
+            "cold_seconds_per_image",
+            "warm_amortized_seconds_per_image",
+            "warm_amortized_speedup_ratio",
+            "seconds_saved_per_image",
+            "warm_total_wall_time_seconds",
+            "warm_output_count",
+            "max_rss_bytes_delta",
+            "peak_footprint_bytes_delta",
+            "basis",
+        },
+    )
+    cold = _positive_number(metrics, "cold_seconds_per_image", prefix="metrics.")
+    warm = _positive_number(metrics, "warm_amortized_seconds_per_image", prefix="metrics.")
+    speedup = _positive_number(metrics, "warm_amortized_speedup_ratio", prefix="metrics.")
+    saved = _number(metrics, "seconds_saved_per_image", prefix="metrics.")
+    _positive_number(metrics, "warm_total_wall_time_seconds", prefix="metrics.")
+    output_count = _positive_int(metrics, "warm_output_count", prefix="metrics.")
+    if output_count <= 1:
+        raise ValueError("metrics.warm_output_count must be greater than 1")
+    _number(metrics, "max_rss_bytes_delta", prefix="metrics.")
+    _number(metrics, "peak_footprint_bytes_delta", prefix="metrics.")
+    _literal(metrics, "basis", COMPARISON_BASIS, prefix="metrics.")
+    if abs(speedup - (cold / warm)) > FLOAT_TOLERANCE:
+        raise ValueError("metrics.warm_amortized_speedup_ratio must equal cold / warm")
+    if abs(saved - (cold - warm)) > FLOAT_TOLERANCE:
+        raise ValueError("metrics.seconds_saved_per_image must equal cold - warm")
 
 
 def _validate_benchmark_manifest(data: dict, *, expected_manifest_type: str) -> None:
@@ -447,6 +552,8 @@ def _number(data: dict, key: str, *, prefix: str = "") -> float | int:
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{prefix}{key} must be a number")
+    if not math.isfinite(value):
+        raise ValueError(f"{prefix}{key} must be finite")
     return value
 
 
