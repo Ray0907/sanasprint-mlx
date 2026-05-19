@@ -1,0 +1,1 @@
+"""AutoencoderDC decode scaffolding."""

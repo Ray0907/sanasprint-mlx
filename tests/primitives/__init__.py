@@ -1,0 +1,1 @@
+"""Primitive tests package marker."""

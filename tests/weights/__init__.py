@@ -1,0 +1,1 @@
+"""Weight tests package marker."""

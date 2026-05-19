@@ -1,0 +1,23 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local generated artifacts
+*.egg-info/
+dist/
+build/
+docs/
+
+# Large model/runtime outputs should stay outside the repo.
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.png
+
+# Curated README assets are intentionally committed.
+!assets/
+!assets/*.png

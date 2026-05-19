@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sanasprint-mlx"
+version = "0.0.0"
+description = "Experimental MLX inference project for SanaSprint 0.6B on Apple Silicon."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "SanaSprint MLX contributors" },
+]
+keywords = ["mlx", "sana", "sanasprint", "diffusion", "apple-silicon"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "huggingface-hub",
+  "mlx",
+  "numpy",
+  "pillow",
+  "safetensors",
+]
+
+[project.optional-dependencies]
+reference = [
+  "accelerate",
+  "diffusers",
+  "torch",
+  "transformers",
+]
+dev = [
+  "pytest",
+]
+
+[project.urls]
+Homepage = "https://huggingface.co/Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers"
+
+[project.scripts]
+sanasprint-mlx-fixtures = "sanasprint_mlx.cli.fixtures:main"
+sanasprint-mlx-generate = "sanasprint_mlx.cli.generate:main"
+sanasprint-mlx-verify = "sanasprint_mlx.cli.verify:main"
+sanasprint-mlx-weights = "sanasprint_mlx.cli.weights:main"
+sanasprint-mlx-memory = "sanasprint_mlx.cli.memory:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
