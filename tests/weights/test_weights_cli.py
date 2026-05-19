@@ -58,6 +58,34 @@ def test_weights_cli_load_scaffold_writes_json_diagnostics(tmp_path):
     assert report["source_tensors"]["mlx_transformer.patch_embed.proj.weight"]["final_dtype"] == "float16"
 
 
+def test_weights_cli_load_scaffold_can_include_caption_projection(tmp_path):
+    snapshot = tmp_path / "snapshot"
+    output = tmp_path / "load-scaffold.json"
+    main(["make-synthetic-snapshot", "--output-dir", str(snapshot)])
+
+    result = main(
+        [
+            "load-scaffold",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--include-caption-projection",
+        ]
+    )
+
+    assert result == 0
+    report = json.loads(output.read_text())
+    assert report["caption_projection_source"] == "real_weights"
+    assert report["loaded_caption_keys"] == [
+        "mlx_transformer.caption_projection.linear_1.weight",
+        "mlx_transformer.caption_projection.linear_1.bias",
+        "mlx_transformer.caption_projection.linear_2.weight",
+        "mlx_transformer.caption_projection.linear_2.bias",
+        "mlx_transformer.caption_norm.weight",
+    ]
+
+
 def test_weights_cli_load_scaffold_rejects_remote_snapshot_path(tmp_path):
     output = tmp_path / "load-scaffold.json"
 

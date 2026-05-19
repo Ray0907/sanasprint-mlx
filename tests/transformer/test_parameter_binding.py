@@ -3,7 +3,7 @@ import pytest
 import mlx.core as mx
 
 from sanasprint_mlx.transformer.config import SanaTransformerConfig
-from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
+from sanasprint_mlx.transformer.model import CAPTION_PARAMETER_KEYS, SanaTransformerDenoiser
 from sanasprint_mlx.transformer.weights import load_mapped_weights_into_denoiser, load_scaffold_weights_from_snapshot
 
 
@@ -12,6 +12,7 @@ PATCH_BIAS = "mlx_transformer.patch_embed.proj.bias"
 OUT_WEIGHT = "mlx_transformer.proj_out.weight"
 OUT_BIAS = "mlx_transformer.proj_out.bias"
 SCAFFOLD_KEYS = [PATCH_WEIGHT, PATCH_BIAS, OUT_WEIGHT, OUT_BIAS]
+CAPTION_KEYS = list(CAPTION_PARAMETER_KEYS)
 
 
 def tiny_config(**overrides):
@@ -88,6 +89,38 @@ def test_scaffold_parameters_do_not_expose_private_caption_projection_for_wide_c
     model = SanaTransformerDenoiser(config)
 
     assert list(model.parameters()) == SCAFFOLD_KEYS
+
+
+def test_caption_parameters_can_be_loaded_without_changing_scaffold_parameter_surface():
+    config = tiny_config(hidden_size=2, caption_channels=3, out_channels=2, in_channels=2)
+    model = SanaTransformerDenoiser(config)
+    state = {
+        "mlx_transformer.caption_projection.linear_1.weight": np.zeros((2, 3), dtype=np.float32),
+        "mlx_transformer.caption_projection.linear_1.bias": np.array([1.0, -1.0], dtype=np.float32),
+        "mlx_transformer.caption_projection.linear_2.weight": np.eye(2, dtype=np.float32),
+        "mlx_transformer.caption_projection.linear_2.bias": np.zeros((2,), dtype=np.float32),
+        "mlx_transformer.caption_norm.weight": np.ones((2,), dtype=np.float32),
+    }
+
+    model.load_caption_parameters(state)
+    _, capture = model(**call_kwargs(config), debug=True)
+
+    assert list(model.parameters()) == SCAFFOLD_KEYS
+    assert list(model.caption_parameters()) == CAPTION_KEYS
+    assert model.caption_projection_source == "real_weights"
+    assert capture.activations["caption_projection"].shape == (1, 3, 2)
+
+
+def test_partial_caption_parameter_load_does_not_enable_real_caption_projection():
+    config = tiny_config(hidden_size=2, caption_channels=3, out_channels=2, in_channels=2)
+    model = SanaTransformerDenoiser(config)
+
+    model.load_caption_parameters(
+        {"mlx_transformer.caption_projection.linear_1.bias": np.ones((2,), dtype=np.float32)},
+        strict=False,
+    )
+
+    assert model.caption_projection_source == "synthetic"
 
 
 def test_scaffold_load_parameters_changes_forward_output():
@@ -235,6 +268,26 @@ def test_load_scaffold_weights_from_snapshot_loads_four_synthetic_projection_ten
     assert diagnostics["source_tensors"][PATCH_WEIGHT]["source_shape"] == [4, 4, 1, 1]
     assert diagnostics["source_tensors"][PATCH_WEIGHT]["final_dtype"] == "float16"
     assert model.input_weight.dtype == mx.float16
+
+
+def test_load_scaffold_weights_from_snapshot_can_include_caption_projection(tmp_path):
+    from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    config = tiny_config(hidden_size=4, in_channels=4, out_channels=4, caption_channels=4)
+    model = SanaTransformerDenoiser(config)
+
+    diagnostics = load_scaffold_weights_from_snapshot(
+        model,
+        snapshot,
+        mlx_dtype=mx.float16,
+        include_caption_projection=True,
+    )
+
+    assert diagnostics["loaded_caption_keys"] == CAPTION_KEYS
+    assert diagnostics["caption_projection_source"] == "real_weights"
+    assert diagnostics["source_tensors"]["mlx_transformer.caption_projection.linear_1.weight"]["final_dtype"] == "float16"
+    assert model.caption_projection_source == "real_weights"
 
 
 def test_loaded_synthetic_scaffold_can_forward_with_wide_caption_channels(tmp_path):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import mlx.core as mx
 
+from sanasprint_mlx.primitives.feed_forward import linear
+from sanasprint_mlx.primitives.norm import rms_norm
 from sanasprint_mlx.primitives.patch import patchify_nchw, unpatchify_nchw
 from sanasprint_mlx.transformer.block import ToyTransformerBlock
 from sanasprint_mlx.transformer.conditioning import conditioning_vector
@@ -13,11 +15,23 @@ PATCH_EMBED_WEIGHT_KEY = "mlx_transformer.patch_embed.proj.weight"
 PATCH_EMBED_BIAS_KEY = "mlx_transformer.patch_embed.proj.bias"
 PROJ_OUT_WEIGHT_KEY = "mlx_transformer.proj_out.weight"
 PROJ_OUT_BIAS_KEY = "mlx_transformer.proj_out.bias"
+CAPTION_LINEAR_1_WEIGHT_KEY = "mlx_transformer.caption_projection.linear_1.weight"
+CAPTION_LINEAR_1_BIAS_KEY = "mlx_transformer.caption_projection.linear_1.bias"
+CAPTION_LINEAR_2_WEIGHT_KEY = "mlx_transformer.caption_projection.linear_2.weight"
+CAPTION_LINEAR_2_BIAS_KEY = "mlx_transformer.caption_projection.linear_2.bias"
+CAPTION_NORM_WEIGHT_KEY = "mlx_transformer.caption_norm.weight"
 SCAFFOLD_PARAMETER_KEYS = (
     PATCH_EMBED_WEIGHT_KEY,
     PATCH_EMBED_BIAS_KEY,
     PROJ_OUT_WEIGHT_KEY,
     PROJ_OUT_BIAS_KEY,
+)
+CAPTION_PARAMETER_KEYS = (
+    CAPTION_LINEAR_1_WEIGHT_KEY,
+    CAPTION_LINEAR_1_BIAS_KEY,
+    CAPTION_LINEAR_2_WEIGHT_KEY,
+    CAPTION_LINEAR_2_BIAS_KEY,
+    CAPTION_NORM_WEIGHT_KEY,
 )
 
 
@@ -32,6 +46,12 @@ class SanaTransformerDenoiser:
         self.output_bias = mx.zeros((config.out_channels * config.patch_size * config.patch_size,))
         self.caption_projection_weight = self._build_caption_projection_weight()
         self.caption_projection_bias = mx.zeros((config.hidden_size,))
+        self.caption_linear_1_weight = self.caption_projection_weight
+        self.caption_linear_1_bias = mx.zeros((config.hidden_size,))
+        self.caption_linear_2_weight = mx.eye(config.hidden_size)
+        self.caption_linear_2_bias = mx.zeros((config.hidden_size,))
+        self.caption_norm_weight = mx.ones((config.hidden_size,))
+        self.caption_projection_source = "synthetic"
 
     def parameters(self) -> dict:
         patch_shape = (
@@ -73,6 +93,45 @@ class SanaTransformerDenoiser:
             elif key == PROJ_OUT_BIAS_KEY:
                 self.output_bias = value
 
+    def caption_parameters(self) -> dict:
+        return {
+            CAPTION_LINEAR_1_WEIGHT_KEY: mx.array(self.caption_linear_1_weight),
+            CAPTION_LINEAR_1_BIAS_KEY: mx.array(self.caption_linear_1_bias),
+            CAPTION_LINEAR_2_WEIGHT_KEY: mx.array(self.caption_linear_2_weight),
+            CAPTION_LINEAR_2_BIAS_KEY: mx.array(self.caption_linear_2_bias),
+            CAPTION_NORM_WEIGHT_KEY: mx.array(self.caption_norm_weight),
+        }
+
+    def load_caption_parameters(self, parameters: dict, *, strict: bool = True) -> None:
+        expected_shapes = self._caption_parameter_shapes()
+        unknown = [key for key in parameters if key not in expected_shapes]
+        if unknown:
+            raise KeyError(unknown[0])
+        if strict:
+            missing = [key for key in CAPTION_PARAMETER_KEYS if key not in parameters]
+            if missing:
+                raise KeyError(missing[0])
+
+        for key in CAPTION_PARAMETER_KEYS:
+            if key not in parameters:
+                continue
+            value = mx.array(parameters[key])
+            expected_shape = expected_shapes[key]
+            if tuple(value.shape) != expected_shape:
+                raise ValueError(f"{key}: expected shape {expected_shape}, got {tuple(value.shape)}")
+            if key == CAPTION_LINEAR_1_WEIGHT_KEY:
+                self.caption_linear_1_weight = value
+            elif key == CAPTION_LINEAR_1_BIAS_KEY:
+                self.caption_linear_1_bias = value
+            elif key == CAPTION_LINEAR_2_WEIGHT_KEY:
+                self.caption_linear_2_weight = value
+            elif key == CAPTION_LINEAR_2_BIAS_KEY:
+                self.caption_linear_2_bias = value
+            elif key == CAPTION_NORM_WEIGHT_KEY:
+                self.caption_norm_weight = value
+        if all(key in parameters for key in CAPTION_PARAMETER_KEYS):
+            self.caption_projection_source = "real_weights"
+
     def _external_parameter_shapes(self) -> dict[str, tuple[int, ...]]:
         patch_size = self.config.patch_size
         return {
@@ -80,6 +139,15 @@ class SanaTransformerDenoiser:
             PATCH_EMBED_BIAS_KEY: (self.config.hidden_size,),
             PROJ_OUT_WEIGHT_KEY: (self.config.out_channels * patch_size * patch_size, self.config.hidden_size),
             PROJ_OUT_BIAS_KEY: (self.config.out_channels * patch_size * patch_size,),
+        }
+
+    def _caption_parameter_shapes(self) -> dict[str, tuple[int, ...]]:
+        return {
+            CAPTION_LINEAR_1_WEIGHT_KEY: (self.config.hidden_size, self.config.caption_channels),
+            CAPTION_LINEAR_1_BIAS_KEY: (self.config.hidden_size,),
+            CAPTION_LINEAR_2_WEIGHT_KEY: (self.config.hidden_size, self.config.hidden_size),
+            CAPTION_LINEAR_2_BIAS_KEY: (self.config.hidden_size,),
+            CAPTION_NORM_WEIGHT_KEY: (self.config.hidden_size,),
         }
 
     def __call__(
@@ -149,6 +217,16 @@ class SanaTransformerDenoiser:
         return mx.ones((self.config.hidden_size, self.config.caption_channels), dtype=mx.float32) * scale
 
     def _project_encoder_hidden_states(self, encoder_hidden_states):
+        if self.caption_projection_source == "real_weights":
+            hidden_states = linear(encoder_hidden_states, self.caption_linear_1_weight, self.caption_linear_1_bias)
+            hidden_states = _gelu_tanh(hidden_states)
+            hidden_states = linear(hidden_states, self.caption_linear_2_weight, self.caption_linear_2_bias)
+            return rms_norm(hidden_states, self.caption_norm_weight, eps=1e-5)
         if self.config.caption_channels == self.config.hidden_size:
             return encoder_hidden_states
         return mx.matmul(encoder_hidden_states, self.caption_projection_weight.T) + self.caption_projection_bias
+
+
+def _gelu_tanh(x):
+    x = mx.array(x)
+    return 0.5 * x * (1.0 + mx.tanh(0.7978845608028654 * (x + 0.044715 * x * x * x)))

@@ -23,6 +23,7 @@ def run_scaffold_denoise_smoke(
     seed: int = 0,
     steps: int = 1,
     sequence_length: int = 4,
+    real_caption_projection: bool = False,
 ) -> dict:
     if steps <= 0:
         raise ValueError("steps must be positive")
@@ -35,7 +36,13 @@ def run_scaffold_denoise_smoke(
     model = SanaTransformerDenoiser(config)
 
     start = time.perf_counter()
-    weight_report = load_scaffold_weights_from_snapshot(model, snapshot_path, mlx_dtype=mlx_dtype, strict=True)
+    weight_report = load_scaffold_weights_from_snapshot(
+        model,
+        snapshot_path,
+        mlx_dtype=mlx_dtype,
+        strict=True,
+        include_caption_projection=real_caption_projection,
+    )
     prompt_embeds, prompt_attention_mask, prompt_report = _prompt_inputs(
         config,
         prompt_cache=prompt_cache,
@@ -63,6 +70,7 @@ def run_scaffold_denoise_smoke(
         "steps": steps,
         "seed": seed,
         "loaded_keys": weight_report["loaded_keys"],
+        "caption_projection_source": weight_report["caption_projection_source"],
         "weights": weight_report,
         "prompt_source": prompt_report["source"],
         "prompt": {

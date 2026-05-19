@@ -49,6 +49,34 @@ def test_scaffold_denoise_smoke_uses_prompt_cache(tmp_path):
     assert report["prompt"]["attention_mask_shape"] == [1, 3]
 
 
+def test_scaffold_denoise_smoke_can_load_real_caption_projection(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 3, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 3), dtype=np.int32),
+        tokenizer_id="fake-tokenizer",
+        model_id="fake-text-encoder",
+        max_sequence_length=3,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+
+    report = run_scaffold_denoise_smoke(snapshot, prompt_cache=cache, real_caption_projection=True)
+
+    assert report["status"] == "PASS"
+    assert report["caption_projection_source"] == "real_weights"
+    assert report["weights"]["loaded_caption_keys"] == [
+        "mlx_transformer.caption_projection.linear_1.weight",
+        "mlx_transformer.caption_projection.linear_1.bias",
+        "mlx_transformer.caption_projection.linear_2.weight",
+        "mlx_transformer.caption_projection.linear_2.bias",
+        "mlx_transformer.caption_norm.weight",
+    ]
+
+
 def test_scaffold_denoise_smoke_is_deterministic_for_multiple_steps(tmp_path):
     snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
 

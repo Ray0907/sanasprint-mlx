@@ -110,6 +110,26 @@ def test_verify_cli_scaffold_denoise_accepts_prompt_cache(tmp_path):
     assert report["prompt"]["embeds_shape"] == [1, 3, 4]
 
 
+def test_verify_cli_scaffold_denoise_accepts_real_caption_projection(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    output = tmp_path / "scaffold-denoise.json"
+
+    code = main(
+        [
+            "scaffold-denoise",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--real-caption-projection",
+        ]
+    )
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["caption_projection_source"] == "real_weights"
+
+
 def test_verify_cli_scaffold_denoise_rejects_remote_snapshot(tmp_path):
     output = tmp_path / "scaffold-denoise.json"
 

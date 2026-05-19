@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     load_scaffold.add_argument("--snapshot", required=True, type=Path)
     load_scaffold.add_argument("--output", required=True, type=Path)
     load_scaffold.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="float32")
+    load_scaffold.add_argument("--include-caption-projection", action="store_true")
 
     return parser
 
@@ -57,7 +58,12 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--snapshot must be a local path, not a remote URL")
         if not args.snapshot.exists():
             parser.error(f"snapshot path does not exist: {args.snapshot}")
-        write_scaffold_load_report(args.snapshot, args.output, dtype=args.dtype)
+        write_scaffold_load_report(
+            args.snapshot,
+            args.output,
+            dtype=args.dtype,
+            include_caption_projection=args.include_caption_projection,
+        )
         print(f"wrote scaffold load report: {args.output}")
         return 0
 
@@ -95,6 +101,11 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         {
             "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
             "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.caption_projection.linear_1.weight": np.eye(4, dtype=np.float32),
+            "transformer.caption_projection.linear_1.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.caption_projection.linear_2.weight": np.eye(4, dtype=np.float32),
+            "transformer.caption_projection.linear_2.bias": np.zeros((4,), dtype=np.float32),
+            "transformer.caption_norm.weight": np.ones((4,), dtype=np.float32),
             "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
             "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
             "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
@@ -127,7 +138,13 @@ def write_inspection_report(snapshot: str | Path, output: str | Path) -> Path:
     return output_path
 
 
-def write_scaffold_load_report(snapshot: str | Path, output: str | Path, *, dtype: str = "float32") -> Path:
+def write_scaffold_load_report(
+    snapshot: str | Path,
+    output: str | Path,
+    *,
+    dtype: str = "float32",
+    include_caption_projection: bool = False,
+) -> Path:
     snapshot_path = Path(snapshot)
     summary = summarize_transformer_config(load_transformer_config(snapshot_path))
     config = SanaTransformerConfig(
@@ -143,7 +160,13 @@ def write_scaffold_load_report(snapshot: str | Path, output: str | Path, *, dtyp
         guidance_embeds_scale=summary.guidance_embeds_scale,
     )
     model = SanaTransformerDenoiser(config)
-    diagnostics = load_scaffold_weights_from_snapshot(model, snapshot_path, mlx_dtype=_mlx_dtype(dtype), strict=True)
+    diagnostics = load_scaffold_weights_from_snapshot(
+        model,
+        snapshot_path,
+        mlx_dtype=_mlx_dtype(dtype),
+        strict=True,
+        include_caption_projection=include_caption_projection,
+    )
     output_path = Path(output)
     output_path.write_text(json.dumps(diagnostics, indent=2, sort_keys=True) + "\n")
     return output_path

@@ -112,6 +112,28 @@ def test_mapper_validates_proj_out_shape_from_config_summary():
     assert mapped["transformer.proj_out.bias"].target_key == "mlx_transformer.proj_out.bias"
 
 
+def test_mapper_validates_caption_projection_shapes_from_config_summary():
+    tensor_infos = [
+        TensorInfo("transformer/model.safetensors", "caption_projection.linear_1.weight", [4, 8], "F32", 32, "transformer"),
+        TensorInfo("transformer/model.safetensors", "caption_projection.linear_1.bias", [4], "F32", 4, "transformer"),
+        TensorInfo("transformer/model.safetensors", "caption_projection.linear_2.weight", [4, 4], "F32", 16, "transformer"),
+        TensorInfo("transformer/model.safetensors", "caption_projection.linear_2.bias", [4], "F32", 4, "transformer"),
+        TensorInfo("transformer/model.safetensors", "caption_norm.weight", [4], "F32", 4, "transformer"),
+        TensorInfo("transformer/model.safetensors", "patch_embed.proj.weight", [4, 3, 1, 1], "F32", 12, "transformer"),
+        TensorInfo("transformer/model.safetensors", "transformer_blocks.0.attn1.to_q.weight", [4, 4], "F32", 16, "transformer"),
+    ]
+
+    report = build_mapping_report(
+        tensor_infos,
+        snapshot_path="/tmp/snapshot",
+        config_summary={"hidden_size": 4, "caption_channels": 8, "in_channels": 3, "patch_size": 1},
+    )
+    mapped = {entry.source_key: entry for entry in report.mapping if entry.status == "mapped"}
+
+    assert mapped["caption_projection.linear_1.weight"].target_key == "mlx_transformer.caption_projection.linear_1.weight"
+    assert mapped["caption_norm.weight"].target_key == "mlx_transformer.caption_norm.weight"
+
+
 def test_mapper_reports_proj_out_shape_mismatch_from_config_summary():
     report = build_mapping_report(
         infos(),

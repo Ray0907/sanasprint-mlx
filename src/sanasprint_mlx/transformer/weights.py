@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from sanasprint_mlx.transformer.model import SCAFFOLD_PARAMETER_KEYS
+from sanasprint_mlx.transformer.model import CAPTION_PARAMETER_KEYS, SCAFFOLD_PARAMETER_KEYS
 from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
 from sanasprint_mlx.weights.inspect import inspect_snapshot
 from sanasprint_mlx.weights.mapping import build_mapping_report
@@ -105,25 +105,31 @@ def load_mapped_weights_into_denoiser(
     *,
     mlx_dtype=None,
     strict: bool = False,
+    include_caption_projection: bool = False,
 ) -> dict:
     scaffold_keys = set(SCAFFOLD_PARAMETER_KEYS)
+    caption_keys = set(CAPTION_PARAMETER_KEYS) if include_caption_projection else set()
+    loadable_keys = scaffold_keys | caption_keys
     selected_entries = []
     ignored_entry_count = 0
     for entry in mapping_report.get("mapping", []):
         status = entry.get("status")
         if status in UNSAFE_STATUSES:
-            if _is_scaffold_relevant_entry(entry):
+            if _is_scaffold_relevant_entry(entry) or (include_caption_projection and _is_caption_relevant_entry(entry)):
                 raise ValueError(f"unsafe scaffold mapping entry status: {status}")
             ignored_entry_count += 1
             continue
 
-        if entry.get("target_key") in scaffold_keys:
+        if entry.get("target_key") in loadable_keys:
             selected_entries.append(entry)
         else:
             ignored_entry_count += 1
 
+    parameters = model.parameters()
+    if include_caption_projection:
+        parameters.update(model.caption_parameters())
     loaded = load_mapped_weights(
-        model.parameters(),
+        parameters,
         source_tensors,
         {"mapping": selected_entries},
         output_backend="mlx",
@@ -131,9 +137,18 @@ def load_mapped_weights_into_denoiser(
     )
     selected_target_keys = {entry.get("target_key") for entry in selected_entries}
     loaded_parameters = {key: loaded[key] for key in scaffold_keys if key in selected_target_keys}
+    loaded_caption_parameters = {key: loaded[key] for key in CAPTION_PARAMETER_KEYS if key in selected_target_keys}
     model.load_parameters(loaded_parameters, strict=strict)
+    if include_caption_projection:
+        model.load_caption_parameters(loaded_caption_parameters, strict=strict)
     loaded_keys = [key for key in SCAFFOLD_PARAMETER_KEYS if key in loaded_parameters]
-    return {"loaded_keys": loaded_keys, "ignored_entry_count": ignored_entry_count}
+    loaded_caption_keys = [key for key in CAPTION_PARAMETER_KEYS if key in loaded_caption_parameters]
+    return {
+        "loaded_keys": loaded_keys,
+        "loaded_caption_keys": loaded_caption_keys,
+        "caption_projection_source": model.caption_projection_source,
+        "ignored_entry_count": ignored_entry_count,
+    }
 
 
 def load_scaffold_weights_from_snapshot(
@@ -142,6 +157,7 @@ def load_scaffold_weights_from_snapshot(
     *,
     mlx_dtype=None,
     strict: bool = True,
+    include_caption_projection: bool = False,
 ) -> dict:
     snapshot = Path(snapshot_path)
     config_summary = summarize_transformer_config(load_transformer_config(snapshot)).__dict__
@@ -149,29 +165,40 @@ def load_scaffold_weights_from_snapshot(
     report = build_mapping_report(tensor_infos, snapshot_path=str(snapshot), config_summary=config_summary)
     report_dict = report.to_dict()
     for entry in report_dict["mapping"]:
-        if entry.get("status") in UNSAFE_STATUSES and _is_scaffold_relevant_entry(entry):
+        relevant = _is_scaffold_relevant_entry(entry) or (include_caption_projection and _is_caption_relevant_entry(entry))
+        if entry.get("status") in UNSAFE_STATUSES and relevant:
             raise ValueError(f"unsafe scaffold mapping entry status: {entry.get('status')}")
+    loadable_keys = set(SCAFFOLD_PARAMETER_KEYS)
+    if include_caption_projection:
+        loadable_keys.update(CAPTION_PARAMETER_KEYS)
     selected_entries = [
         entry
         for entry in report_dict["mapping"]
-        if entry.get("status") == "mapped" and entry.get("target_key") in set(SCAFFOLD_PARAMETER_KEYS)
+        if entry.get("status") == "mapped" and entry.get("target_key") in loadable_keys
     ]
-    _reject_duplicate_scaffold_targets(selected_entries)
+    _reject_duplicate_targets(selected_entries, SCAFFOLD_PARAMETER_KEYS)
+    if include_caption_projection:
+        _reject_duplicate_targets(selected_entries, CAPTION_PARAMETER_KEYS)
     if strict:
         selected_targets = {entry.get("target_key") for entry in selected_entries}
         missing_targets = [key for key in SCAFFOLD_PARAMETER_KEYS if key not in selected_targets]
+        if include_caption_projection:
+            missing_targets.extend(key for key in CAPTION_PARAMETER_KEYS if key not in selected_targets)
         if missing_targets:
             raise KeyError(missing_targets[0])
 
-    source_tensors, source_metadata = _read_scaffold_source_tensors(snapshot, tensor_infos, selected_entries)
+    source_tensors, source_metadata = _read_source_tensors(snapshot, tensor_infos, selected_entries)
     diagnostics = load_mapped_weights_into_denoiser(
         model,
         source_tensors,
         report_dict,
         mlx_dtype=mlx_dtype,
         strict=strict,
+        include_caption_projection=include_caption_projection,
     )
     parameters = model.parameters()
+    if include_caption_projection:
+        parameters.update(model.caption_parameters())
     diagnostics.update(
         {
             "snapshot_path": str(snapshot),
@@ -181,7 +208,7 @@ def load_scaffold_weights_from_snapshot(
     return diagnostics
 
 
-def _read_scaffold_source_tensors(snapshot: Path, tensor_infos, selected_entries: list[dict]) -> tuple[dict, dict]:
+def _read_source_tensors(snapshot: Path, tensor_infos, selected_entries: list[dict]) -> tuple[dict, dict]:
     infos_by_key: dict[str, list] = {}
     for info in tensor_infos:
         if info.component == "transformer":
@@ -209,19 +236,19 @@ def _read_scaffold_source_tensors(snapshot: Path, tensor_infos, selected_entries
     return source_tensors, source_metadata
 
 
-def _reject_duplicate_scaffold_targets(selected_entries: list[dict]) -> None:
+def _reject_duplicate_targets(selected_entries: list[dict], target_keys: tuple[str, ...]) -> None:
     counts: dict[str, int] = {}
     for entry in selected_entries:
         target_key = entry["target_key"]
         counts[target_key] = counts.get(target_key, 0) + 1
-    duplicates = [key for key in SCAFFOLD_PARAMETER_KEYS if counts.get(key, 0) > 1]
+    duplicates = [key for key in target_keys if counts.get(key, 0) > 1]
     if duplicates:
         raise ValueError(f"duplicate scaffold target mapping: {duplicates[0]}")
 
 
 def _source_tensor_diagnostics(source_metadata: dict, parameters: dict) -> dict:
     diagnostics = {}
-    for key in SCAFFOLD_PARAMETER_KEYS:
+    for key in SCAFFOLD_PARAMETER_KEYS + CAPTION_PARAMETER_KEYS:
         if key not in source_metadata:
             continue
         value = dict(source_metadata[key])
@@ -247,6 +274,22 @@ def _is_scaffold_relevant_entry(entry: dict) -> bool:
     if isinstance(source_key, str) and _matches_any_prefix_or_wildcard(
         source_key,
         ("transformer.patch_embed.", "patch_embed.", "transformer.proj_out.", "proj_out."),
+    ):
+        return True
+    return False
+
+
+def _is_caption_relevant_entry(entry: dict) -> bool:
+    target_key = entry.get("target_key")
+    source_key = entry.get("source_key")
+    if isinstance(target_key, str) and _matches_any_prefix_or_wildcard(
+        target_key,
+        ("mlx_transformer.caption_projection.", "mlx_transformer.caption_norm."),
+    ):
+        return True
+    if isinstance(source_key, str) and _matches_any_prefix_or_wildcard(
+        source_key,
+        ("transformer.caption_projection.", "caption_projection.", "transformer.caption_norm.", "caption_norm."),
     ):
         return True
     return False

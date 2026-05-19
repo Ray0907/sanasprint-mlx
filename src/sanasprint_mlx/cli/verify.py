@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     scaffold.add_argument("--seed", type=int, default=0)
     scaffold.add_argument("--steps", type=int, default=1)
     scaffold.add_argument("--sequence-length", type=int, default=4)
+    scaffold.add_argument("--real-caption-projection", action="store_true")
 
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot")
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 steps=args.steps,
                 sequence_length=args.sequence_length,
+                real_caption_projection=args.real_caption_projection,
             )
             write_verification_report(report, args.output)
             print(f"wrote scaffold denoise report: {args.output}")
