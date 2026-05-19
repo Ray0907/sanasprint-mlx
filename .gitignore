@@ -8,7 +8,19 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-docs/
+/docs/
+/logs/
+*.log
+/benchmark-runs/
+/.benchmarks/
+/raw-benchmarks/
+/weights/
+/checkpoints/
+/fixtures/real/
+/.fixtures/
+/fixture-dumps/
+/scratch-plans/
+/scratch-outputs/
 
 # Large model/runtime outputs should stay outside the repo.
 *.safetensors
@@ -20,4 +32,5 @@ docs/
 
 # Curated README assets are intentionally committed.
 !assets/
-!assets/*.png
+!assets/allowlist.txt
+!assets/showcase-reference-pipeline.png

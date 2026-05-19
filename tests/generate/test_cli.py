@@ -126,6 +126,7 @@ def test_generate_cli_reference_pipeline_runs_when_explicitly_requested(tmp_path
 
     assert code == 0
     assert calls[0]["prompt"] == "real"
+    assert calls[0]["torch_dtype"] == "bfloat16"
 
 
 def test_generate_cli_non_dry_run_requires_reference_pipeline(tmp_path):
@@ -141,6 +142,81 @@ def test_generate_cli_non_dry_run_requires_reference_pipeline(tmp_path):
     )
 
     assert code == 2
+
+
+def test_generate_cli_non_dry_run_without_reference_pipeline_does_not_call_reference(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {"output": str(kwargs["output"])}
+
+    monkeypatch.setattr(generate_cli, "run_reference_pipeline_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "real",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+        ]
+    )
+
+    assert code == 2
+    assert calls == []
+
+
+def test_generate_cli_remote_snapshot_requires_allow_download_before_reference_call(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {"output": str(kwargs["output"])}
+
+    monkeypatch.setattr(generate_cli, "run_reference_pipeline_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "real",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+            "--reference-pipeline",
+        ]
+    )
+
+    assert code == 2
+    assert calls == []
+
+
+def test_generate_cli_remote_snapshot_with_allow_download_reaches_reference_call(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {"output": str(kwargs["output"])}
+
+    monkeypatch.setattr(generate_cli, "run_reference_pipeline_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "real",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+            "--allow-download",
+            "--reference-pipeline",
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["allow_download"] is True
 
 
 def test_generate_cli_registers_console_script():

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from sanasprint_mlx.verification.gates import build_verification_report, load_pass_evidence
+from sanasprint_mlx.verification.hygiene import check_repository_hygiene
 from sanasprint_mlx.verification.report import write_verification_report
 
 
@@ -18,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-fixture")
     parser.add_argument("--decode-fixture")
     parser.add_argument("--pass-evidence", type=Path)
+    parser.add_argument("--check-hygiene", action="store_true")
     return parser
 
 
@@ -38,8 +40,12 @@ def main(argv: list[str] | None = None) -> int:
                 "decode_parity": args.decode_fixture,
             },
         )
+        if args.check_hygiene:
+            report["hygiene"] = check_repository_hygiene()
         write_verification_report(report, args.output)
         print(f"wrote verification report: {args.output}")
+        if args.check_hygiene and report["hygiene"]["status"] != "PASS":
+            return 2
         return 0
     except (OSError, ValueError) as error:
         print(f"error: {error}")
