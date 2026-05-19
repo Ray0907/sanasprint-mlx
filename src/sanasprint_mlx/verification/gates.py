@@ -10,11 +10,19 @@ KNOWN_EVIDENCE_GATES = {
     "loop_parity",
     "text_parity",
     "decode_parity",
+    "scaffold_denoise",
     "smoke_512",
     "smoke_768",
 }
 
-REQUIRED_FOR_FEATURE_9 = tuple(sorted(KNOWN_EVIDENCE_GATES))
+REQUIRED_FOR_FEATURE_9 = (
+    "decode_parity",
+    "loop_parity",
+    "smoke_512",
+    "smoke_768",
+    "text_parity",
+    "transformer_parity",
+)
 
 FIXTURE_GATES = {
     "transformer_parity": (
@@ -52,6 +60,7 @@ def build_verification_report(
         path = fixture_overrides.get(gate_id) or env.get(env_var)
         gates[gate_id] = _fixture_gate(gate_id, env_var, path, command_template, evidence)
     gates["snapshot"] = _snapshot_gate(snapshot, allow_download)
+    gates["scaffold_denoise"] = _scaffold_denoise_gate(snapshot, allow_download, evidence)
     gates["smoke_512"] = _smoke_gate(512, snapshot, allow_download, evidence)
     gates["smoke_768"] = _smoke_gate(768, snapshot, allow_download, evidence)
     gates["feature_9_preconditions"] = _feature_9_gate(gates)
@@ -132,6 +141,41 @@ def _smoke_gate(size: int, snapshot, allow_download: bool, evidence: dict) -> di
         "id": gate_id,
         "status": "READY" if snapshot_gate["status"] == "READY" else "BLOCKED",
         "reason": "snapshot ready" if snapshot_gate["status"] == "READY" else "snapshot blocked",
+        "command": command,
+    }
+
+
+def _scaffold_denoise_gate(snapshot, allow_download: bool, evidence: dict) -> dict:
+    del allow_download
+    gate_id = "scaffold_denoise"
+    command = (
+        "sanasprint-mlx-verify scaffold-denoise "
+        f"--snapshot {snapshot or '/path/to/Sana_Sprint_0.6B_1024px_diffusers'} "
+        "--output /tmp/sanasprint-mlx-scaffold-denoise.json "
+        "--dtype bfloat16 --steps 1"
+    )
+    if gate_id in evidence["gates"]:
+        item = dict(evidence["gates"][gate_id])
+        return {"id": gate_id, "status": "PASS", "reason": "external pass evidence", "command": command, **item}
+    if snapshot is None:
+        return {
+            "id": gate_id,
+            "status": "BLOCKED",
+            "reason": "missing local snapshot path",
+            "command": command,
+        }
+    if _looks_remote(snapshot):
+        return {
+            "id": gate_id,
+            "status": "BLOCKED",
+            "reason": "scaffold denoise requires a local snapshot path",
+            "command": command,
+        }
+    exists = Path(snapshot).exists()
+    return {
+        "id": gate_id,
+        "status": "READY" if exists else "BLOCKED",
+        "reason": "local snapshot exists" if exists else "local snapshot path does not exist",
         "command": command,
     }
 

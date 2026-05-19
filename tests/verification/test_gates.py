@@ -58,6 +58,24 @@ def test_pass_evidence_can_mark_known_gate_passed(tmp_path):
     assert gate(report, "transformer_parity")["status"] == "PASS"
 
 
+def test_pass_evidence_can_mark_scaffold_denoise_passed(tmp_path):
+    evidence = {
+        "schema_version": 1,
+        "gates": {
+            "scaffold_denoise": {
+                "status": "PASS",
+                "command": "cmd",
+                "artifact": str(tmp_path),
+                "observed_at": "2026-05-20T00:00:00Z",
+            }
+        },
+    }
+
+    report = build_verification_report(env={}, pass_evidence=evidence)
+
+    assert gate(report, "scaffold_denoise")["status"] == "PASS"
+
+
 def test_invalid_pass_evidence_is_rejected(tmp_path):
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps({"schema_version": 1, "gates": {"feature_9_preconditions": {"status": "PASS"}}}))
@@ -110,7 +128,20 @@ def test_report_includes_real_verification_commands():
     report = build_verification_report(env={})
 
     assert "tests/transformer/test_real_fixture_parity.py" in gate(report, "transformer_parity")["command"]
+    assert "sanasprint-mlx-verify scaffold-denoise" in gate(report, "scaffold_denoise")["command"]
     assert "sanasprint-mlx-generate" in gate(report, "smoke_512")["command"]
+
+
+def test_scaffold_denoise_gate_requires_local_snapshot(tmp_path):
+    ready = build_verification_report(env={}, snapshot=tmp_path)
+    remote = build_verification_report(
+        env={},
+        snapshot="Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+        allow_download=True,
+    )
+
+    assert gate(ready, "scaffold_denoise")["status"] == "READY"
+    assert gate(remote, "scaffold_denoise")["status"] == "BLOCKED"
 
 
 def test_smoke_command_uses_reference_pipeline_and_allow_download_when_enabled():
