@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 
 from sanasprint_mlx.generate.plan import GenerationRequest, build_phase_plan
-from sanasprint_mlx.generate.reference_bridge import run_reference_pipeline_generation
+from sanasprint_mlx.generate.reference_bridge import (
+    run_reference_pipeline_batch_generation,
+    run_reference_pipeline_generation,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=2)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--snapshot")
     parser.add_argument("--cached-fixture", type=Path)
     parser.add_argument("--prompt-cache", type=Path)
@@ -39,6 +44,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output.suffix.lower() != ".png":
         return _error("output path must end with .png")
+    if args.count <= 0:
+        return _error("--count must be positive")
+    if args.count > 1 and args.output_dir is None:
+        return _error("--count greater than 1 requires --output-dir")
     if args.dry_run and args.plan_output is None:
         return _error("--dry-run requires --plan-output")
 
@@ -75,18 +84,35 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.reference_pipeline:
         try:
-            report = run_reference_pipeline_generation(
-                prompt=args.prompt,
-                height=args.height,
-                width=args.width,
-                steps=args.steps,
-                seed=args.seed,
-                output=args.output,
-                snapshot=args.snapshot,
-                allow_download=args.allow_download,
-                low_memory=args.low_memory,
-                torch_dtype=args.torch_dtype,
-            )
+            if args.count == 1:
+                report = run_reference_pipeline_generation(
+                    prompt=args.prompt,
+                    height=args.height,
+                    width=args.width,
+                    steps=args.steps,
+                    seed=args.seed,
+                    output=args.output,
+                    snapshot=args.snapshot,
+                    allow_download=args.allow_download,
+                    low_memory=args.low_memory,
+                    torch_dtype=args.torch_dtype,
+                )
+            else:
+                args.output_dir.mkdir(parents=True, exist_ok=True)
+                outputs = _batch_output_paths(args.output, args.output_dir, args.count)
+                reports = run_reference_pipeline_batch_generation(
+                    prompt=args.prompt,
+                    height=args.height,
+                    width=args.width,
+                    steps=args.steps,
+                    seed=args.seed,
+                    outputs=outputs,
+                    snapshot=args.snapshot,
+                    allow_download=args.allow_download,
+                    low_memory=args.low_memory,
+                    torch_dtype=args.torch_dtype,
+                )
+                report = _batch_report(reports)
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             return _error(str(error))
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -98,6 +124,22 @@ def main(argv: list[str] | None = None) -> int:
 def _error(message: str) -> int:
     print(f"error: {message}")
     return 2
+
+
+def _batch_output_paths(output: Path, output_dir: Path, count: int) -> list[Path]:
+    return [output_dir / f"{output.stem}-{index:04d}{output.suffix}" for index in range(1, count + 1)]
+
+
+def _batch_report(reports: list[dict]) -> dict:
+    first = reports[0]
+    return {
+        "model": first["model"],
+        "device": first["device"],
+        "low_memory": first["low_memory"],
+        "torch_dtype": first["torch_dtype"],
+        "count": len(reports),
+        "outputs": reports,
+    }
 
 
 if __name__ == "__main__":
