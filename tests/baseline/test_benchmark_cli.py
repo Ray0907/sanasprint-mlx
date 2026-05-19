@@ -88,6 +88,68 @@ def test_benchmark_cli_calls_runner_with_defaults(tmp_path, monkeypatch):
     assert calls[0]["torch_dtype"] == "bfloat16"
 
 
+def test_benchmark_cli_warm_mode_calls_warm_runner(tmp_path, monkeypatch):
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {}
+
+    monkeypatch.setattr(benchmark_cli, "run_warm_persistent_diffusers_benchmark", fake_run)
+
+    code = main(
+        [
+            "--benchmark-class",
+            "warm_persistent_diffusers",
+            "--prompt",
+            "p",
+            "--snapshot",
+            str(snapshot),
+            "--revision",
+            "r",
+            "--output",
+            str(tmp_path / "warm.json"),
+            "--output-dir",
+            str(tmp_path / "warm-runs"),
+            "--count",
+            "2",
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["count"] == 2
+    assert calls[0]["output_dir"] == tmp_path / "warm-runs"
+
+
+def test_benchmark_cli_warm_mode_rejects_invalid_count(tmp_path, monkeypatch):
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+
+    def fake_run(**kwargs):
+        raise AssertionError("runner should not be called")
+
+    monkeypatch.setattr(benchmark_cli, "run_warm_persistent_diffusers_benchmark", fake_run)
+
+    code = main(
+        [
+            "--benchmark-class",
+            "warm_persistent_diffusers",
+            "--prompt",
+            "p",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(tmp_path / "warm.json"),
+            "--count",
+            "0",
+        ]
+    )
+
+    assert code == 2
+
+
 def test_benchmark_cli_registers_console_script():
     pyproject = Path("pyproject.toml").read_text()
 

@@ -107,6 +107,35 @@ def build_benchmark_command(
     return command
 
 
+def build_warm_benchmark_command(
+    *,
+    prompt: str,
+    snapshot: str | Path,
+    image_output: str | Path,
+    image_output_dir: str | Path,
+    count: int,
+    height: int,
+    width: int,
+    steps: int,
+    seed: int,
+    torch_dtype: str,
+    low_memory: bool,
+) -> list[str]:
+    command = build_benchmark_command(
+        prompt=prompt,
+        snapshot=snapshot,
+        output=image_output,
+        height=height,
+        width=width,
+        steps=steps,
+        seed=seed,
+        torch_dtype=torch_dtype,
+        low_memory=low_memory,
+    )
+    command.extend(["--output-dir", str(image_output_dir), "--count", str(count)])
+    return command
+
+
 def run_locked_cold_diffusers_benchmark(
     *,
     prompt: str,
@@ -238,6 +267,128 @@ def run_locked_cold_diffusers_benchmark(
     return manifest
 
 
+def run_warm_persistent_diffusers_benchmark(
+    *,
+    prompt: str,
+    snapshot: str | Path,
+    output: str | Path,
+    output_dir: str | Path,
+    height: int = 512,
+    width: int = 512,
+    steps: int = 2,
+    seed: int = 42,
+    count: int = 2,
+    torch_dtype: str = "bfloat16",
+    low_memory: bool = False,
+    model_repo: str = MODEL_REPO,
+    revision: str | None = None,
+    runner: Callable[[list[str]], RunnerResult] | None = None,
+    clock: Callable[[], float] | None = None,
+    environment_collector: Callable[[], dict] | None = None,
+    image_metadata_collector: Callable[[Path], dict] | None = None,
+) -> dict:
+    if count <= 0:
+        raise ValueError("count must be positive")
+    output_path = ensure_artifact_safe_path(output)
+    if output_path.suffix.lower() != ".json":
+        raise ValueError("output path must end with .json")
+    run_output_dir = ensure_artifact_safe_path(output_dir)
+    image_output = ensure_artifact_safe_path(run_output_dir / "warm.png")
+    snapshot_path = Path(snapshot)
+    if _looks_remote(str(snapshot)) or not snapshot_path.exists():
+        raise ValueError("snapshot must be an existing local path")
+    resolved_revision = revision or infer_revision_from_snapshot(snapshot_path)
+    if resolved_revision is None:
+        raise ValueError("revision is required when it cannot be inferred from snapshot")
+
+    runner = runner or run_command_with_time
+    clock = clock or time.monotonic
+    environment_collector = environment_collector or collect_environment
+    image_metadata_collector = image_metadata_collector or collect_image_metadata
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+
+    command = build_warm_benchmark_command(
+        prompt=prompt,
+        snapshot=snapshot_path,
+        image_output=image_output,
+        image_output_dir=run_output_dir,
+        count=count,
+        height=height,
+        width=width,
+        steps=steps,
+        seed=seed,
+        torch_dtype=torch_dtype,
+        low_memory=low_memory,
+    )
+    start = clock()
+    result = runner(command)
+    elapsed = clock() - start
+    if result.returncode != 0:
+        raise RuntimeError(f"warm benchmark failed: {result.stderr.strip()}")
+    report = parse_generate_report(result.stdout)
+    output_paths, output_seeds = _validate_warm_generate_report(report, count=count, seed=seed, expected_output_dir=run_output_dir)
+    image_metadata = image_metadata_collector(Path(output_paths[-1]))
+    device = report.get("device", "")
+    engine = "diffusers_pytorch_mps" if device == "mps" else "diffusers_pytorch_cpu"
+    amortized = elapsed / count
+    run_results = [
+        {
+            "index": 1,
+            "wall_time_seconds": elapsed,
+            "max_rss_bytes": result.max_rss_bytes,
+            "peak_footprint_bytes": result.peak_footprint_bytes,
+            "timing_source": "wrapper_total",
+            "output_count": count,
+            "output_paths": output_paths,
+            "output_seeds": output_seeds,
+            "success": True,
+        }
+    ]
+    manifest = {
+        "schema_version": 1,
+        "manifest_type": "raw_benchmark",
+        "benchmark_class": "warm_persistent_diffusers",
+        "created_at": _utc_now(),
+        "command": " ".join(command),
+        "model": {
+            "repo": model_repo,
+            "revision": resolved_revision,
+        },
+        "runtime": {
+            "engine": engine,
+            "dtype": torch_dtype,
+            "device": str(device),
+            "low_memory": low_memory,
+        },
+        "generation": {
+            "prompt_hash": prompt_hash(prompt),
+            "seed": seed,
+            "width": width,
+            "height": height,
+            "steps": steps,
+        },
+        "environment": environment_collector(),
+        "behavior": {
+            "reference_pipeline_required": True,
+            "allow_download": False,
+            "default_behavior_changed": False,
+        },
+        "image": image_metadata,
+        "runs": run_results,
+        "summary": {
+            "run_count": 1,
+            "output_count": count,
+            "total_wall_time_seconds": summarize_metric([elapsed]),
+            "amortized_wall_time_seconds_per_output": summarize_metric([amortized]),
+            "max_rss_bytes": summarize_metric([result.max_rss_bytes]),
+            "peak_footprint_bytes": summarize_metric([result.peak_footprint_bytes]),
+        },
+    }
+    validate_raw_benchmark_manifest(manifest)
+    _write_json_atomic(output_path, manifest)
+    return manifest
+
+
 def infer_revision_from_snapshot(snapshot: str | Path) -> str | None:
     path = Path(snapshot)
     if path.parent.name == "snapshots" and REVISION_RE.fullmatch(path.name):
@@ -250,16 +401,50 @@ def prompt_hash(prompt: str) -> str:
 
 
 def parse_generate_report(stdout: str) -> dict:
-    start = stdout.rfind("{")
-    if start == -1:
+    decoder = json.JSONDecoder()
+    candidates = []
+    for start, character in enumerate(stdout):
+        if character != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(stdout[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and not stdout[start + end :].strip():
+            candidates.append(value)
+    if not candidates:
         raise RuntimeError("generate output did not contain JSON report")
-    try:
-        report = json.loads(stdout[start:])
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"generate JSON report is invalid: {error}") from error
-    if not isinstance(report, dict):
-        raise RuntimeError("generate JSON report must be an object")
-    return report
+    return candidates[-1]
+
+
+def _validate_warm_generate_report(report: dict, *, count: int, seed: int, expected_output_dir: Path) -> tuple[list[str], list[int]]:
+    if report.get("count") != count:
+        raise RuntimeError("warm generate report count mismatch")
+    outputs = report.get("outputs")
+    if not isinstance(outputs, list) or len(outputs) != count:
+        raise RuntimeError("warm generate report outputs mismatch")
+    output_paths = []
+    output_seeds = []
+    for index, item in enumerate(outputs):
+        if not isinstance(item, dict):
+            raise RuntimeError("warm generate report output must be an object")
+        expected_seed = seed + index
+        if item.get("seed") != expected_seed:
+            raise RuntimeError("warm generate report seed mismatch")
+        output = item.get("output")
+        if not isinstance(output, str) or not output:
+            raise RuntimeError("warm generate report output path is invalid")
+        try:
+            output_path = ensure_artifact_safe_path(output)
+        except ValueError as error:
+            raise RuntimeError("warm generate report output path is not artifact-safe") from error
+        try:
+            output_path.resolve(strict=False).relative_to(expected_output_dir.resolve(strict=False))
+        except ValueError as error:
+            raise RuntimeError("warm generate report output path is outside the expected output directory") from error
+        output_paths.append(output)
+        output_seeds.append(expected_seed)
+    return output_paths, output_seeds
 
 
 def run_command_with_time(command: list[str]) -> RunnerResult:

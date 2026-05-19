@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ RUNTIME_ENGINES = {"diffusers_pytorch_mps", "diffusers_pytorch_cpu", "mlx", "hyb
 DTYPES = {"bfloat16", "float16", "float32", "int8", "int4"}
 PASS_FAIL = {"PASS", "FAIL"}
 FLOAT_TOLERANCE = 1e-9
+ALLOWED_ARTIFACT_PREFIXES = {"benchmark-runs", ".benchmarks", "raw-benchmarks"}
 
 
 def validate_raw_benchmark_manifest(data: dict) -> dict:
@@ -108,7 +111,7 @@ def _validate_benchmark_manifest(data: dict, *, expected_manifest_type: str) -> 
     _validate_environment(data, runtime["engine"])
     _validate_behavior(data)
     _validate_image(data)
-    _validate_runs_and_summary(data)
+    _validate_runs_and_summary(data, data["benchmark_class"])
 
 
 def _validate_model(data: dict) -> None:
@@ -189,7 +192,14 @@ def _validate_image(data: dict) -> None:
         raise ValueError("image.valid must be true")
 
 
-def _validate_runs_and_summary(data: dict) -> None:
+def _validate_runs_and_summary(data: dict, benchmark_class: str) -> None:
+    if benchmark_class == "warm_persistent_diffusers":
+        _validate_warm_runs_and_summary(data)
+        return
+    _validate_cold_runs_and_summary(data)
+
+
+def _validate_cold_runs_and_summary(data: dict) -> None:
     runs = _list(data, "runs")
     if not runs:
         raise ValueError("runs must not be empty")
@@ -216,6 +226,128 @@ def _validate_runs_and_summary(data: dict) -> None:
     _validate_metric_summary(summary, "wall_time_seconds")
     _validate_metric_summary(summary, "max_rss_bytes")
     _validate_metric_summary(summary, "peak_footprint_bytes")
+
+
+def _validate_warm_runs_and_summary(data: dict) -> None:
+    runs = _list(data, "runs")
+    if len(runs) != 1:
+        raise ValueError("warm_persistent_diffusers runs must contain exactly one process run")
+    run = runs[0]
+    _object_data(
+        run,
+        "runs[0]",
+        required={
+            "index",
+            "wall_time_seconds",
+            "max_rss_bytes",
+            "peak_footprint_bytes",
+            "timing_source",
+            "output_count",
+            "output_paths",
+            "output_seeds",
+            "success",
+        },
+    )
+    _positive_int(run, "index", prefix="runs[0].")
+    _positive_number(run, "wall_time_seconds", prefix="runs[0].")
+    _positive_int(run, "max_rss_bytes", prefix="runs[0].")
+    _positive_int(run, "peak_footprint_bytes", prefix="runs[0].")
+    _literal(run, "timing_source", "wrapper_total", prefix="runs[0].")
+    output_count = _positive_int(run, "output_count", prefix="runs[0].")
+    output_paths = _list(run, "output_paths")
+    output_seeds = _list(run, "output_seeds")
+    if len(output_paths) != output_count or len(output_seeds) != output_count:
+        raise ValueError("runs[0].output_count must match output path and seed counts")
+    for index, output_path in enumerate(output_paths):
+        if not isinstance(output_path, str) or not output_path:
+            raise ValueError(f"runs[0].output_paths[{index}] must be a non-empty string")
+        _safe_artifact_path(output_path, f"runs[0].output_paths[{index}]")
+    for index, output_seed in enumerate(output_seeds):
+        if isinstance(output_seed, bool) or not isinstance(output_seed, int):
+            raise ValueError(f"runs[0].output_seeds[{index}] must be an int")
+    _bool(run, "success", prefix="runs[0].")
+    if not run["success"]:
+        raise ValueError("runs[0].success must be true")
+
+    summary = _object(
+        data,
+        "summary",
+        required={
+            "run_count",
+            "output_count",
+            "total_wall_time_seconds",
+            "amortized_wall_time_seconds_per_output",
+            "max_rss_bytes",
+            "peak_footprint_bytes",
+        },
+    )
+    _positive_int(summary, "run_count")
+    if summary["run_count"] != 1:
+        raise ValueError("summary.run_count must be 1 for warm_persistent_diffusers")
+    summary_output_count = _positive_int(summary, "output_count")
+    if summary_output_count != output_count:
+        raise ValueError("summary.output_count must match runs[0].output_count")
+    _validate_metric_summary(summary, "total_wall_time_seconds")
+    _validate_metric_summary(summary, "amortized_wall_time_seconds_per_output")
+    _validate_metric_summary(summary, "max_rss_bytes")
+    _validate_metric_summary(summary, "peak_footprint_bytes")
+    _metric_summary_equals(summary["total_wall_time_seconds"], run["wall_time_seconds"], "summary.total_wall_time_seconds")
+    _metric_summary_equals(
+        summary["amortized_wall_time_seconds_per_output"],
+        run["wall_time_seconds"] / output_count,
+        "summary.amortized_wall_time_seconds_per_output",
+    )
+    _metric_summary_equals(summary["max_rss_bytes"], run["max_rss_bytes"], "summary.max_rss_bytes")
+    _metric_summary_equals(summary["peak_footprint_bytes"], run["peak_footprint_bytes"], "summary.peak_footprint_bytes")
+
+
+def _safe_artifact_path(path: str, label: str) -> None:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        if ".." in candidate.parts:
+            raise ValueError(f"{label} must not contain parent directory traversal")
+        if not candidate.parts or candidate.parts[0] not in ALLOWED_ARTIFACT_PREFIXES:
+            raise ValueError(f"{label} must be under /tmp or ignored benchmark roots")
+        return
+    resolved = candidate.resolve(strict=False)
+    temp_roots = {Path(tempfile.gettempdir()).resolve(strict=False), Path("/tmp").resolve(strict=False)}
+    if any(resolved == temp_root or temp_root in resolved.parents for temp_root in temp_roots):
+        return
+    if not _is_ignored_repo_artifact_path(resolved):
+        raise ValueError(f"{label} must be under /tmp or ignored benchmark roots")
+
+
+def _is_ignored_repo_artifact_path(path: Path) -> bool:
+    try:
+        root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        root = Path(root_result.stdout.strip()).resolve(strict=False)
+        relative = path.relative_to(root)
+    except (subprocess.CalledProcessError, ValueError):
+        return False
+    if not relative.parts or relative.parts[0] not in ALLOWED_ARTIFACT_PREFIXES:
+        return False
+    result = subprocess.run(
+        ["git", "check-ignore", str(path)],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0
+
+
+def _metric_summary_equals(metric: dict, expected: float | int, label: str) -> None:
+    for key in ("min", "median", "max"):
+        if abs(metric[key] - expected) > FLOAT_TOLERANCE:
+            raise ValueError(f"{label} must match wrapper_total timing")
+    if abs(metric["positive_noise_bound"]) > FLOAT_TOLERANCE:
+        raise ValueError(f"{label}.positive_noise_bound must be 0 for a single warm process")
 
 
 def _validate_metric_summary(summary: dict, key: str) -> None:

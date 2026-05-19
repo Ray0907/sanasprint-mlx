@@ -6,10 +6,13 @@ import pytest
 from sanasprint_mlx.baseline.benchmark import (
     RunnerResult,
     build_benchmark_command,
+    build_warm_benchmark_command,
     ensure_artifact_safe_path,
     infer_revision_from_snapshot,
+    parse_generate_report,
     prompt_hash,
     run_locked_cold_diffusers_benchmark,
+    run_warm_persistent_diffusers_benchmark,
     summarize_metric,
 )
 from sanasprint_mlx.baseline.schema import validate_raw_benchmark_manifest
@@ -106,6 +109,41 @@ def test_build_benchmark_command_uses_reference_pipeline_without_download(tmp_pa
     assert "--low-memory" in command
 
 
+def test_build_warm_benchmark_command_uses_batch_without_download(tmp_path):
+    command = build_warm_benchmark_command(
+        prompt="p",
+        snapshot=tmp_path / "snapshot",
+        image_output=tmp_path / "warm.png",
+        image_output_dir=tmp_path / "images",
+        count=2,
+        height=512,
+        width=512,
+        steps=2,
+        seed=42,
+        torch_dtype="bfloat16",
+        low_memory=True,
+    )
+
+    assert "--reference-pipeline" in command
+    assert "--allow-download" not in command
+    assert command[command.index("--count") + 1] == "2"
+    assert command[command.index("--output") + 1] == str(tmp_path / "warm.png")
+    assert command[command.index("--output-dir") + 1] == str(tmp_path / "images")
+
+
+def test_parse_generate_report_handles_nested_batch_json():
+    payload = {
+        "count": 2,
+        "device": "mps",
+        "outputs": [
+            {"output": "/tmp/warm-0001.png", "seed": 42},
+            {"output": "/tmp/warm-0002.png", "seed": 43},
+        ],
+    }
+
+    assert parse_generate_report("progress {not json}\n" + json.dumps(payload) + "\n") == payload
+
+
 def test_run_benchmark_builds_valid_manifest(tmp_path):
     snapshot = tmp_path / "models--repo--name" / "snapshots" / ("a" * 40)
     snapshot.mkdir(parents=True)
@@ -136,6 +174,60 @@ def test_run_benchmark_builds_valid_manifest(tmp_path):
     }
     assert manifest["summary"]["run_count"] == 3
     assert manifest["image"]["path"].endswith("run-3.png")
+
+
+def test_run_warm_benchmark_builds_valid_manifest(tmp_path):
+    snapshot = tmp_path / "models--repo--name" / "snapshots" / ("a" * 40)
+    snapshot.mkdir(parents=True)
+    output = tmp_path / "warm.json"
+    output_dir = tmp_path / "warm-runs"
+    calls = []
+
+    manifest = run_warm_persistent_diffusers_benchmark(
+        prompt="koi",
+        snapshot=snapshot,
+        output=output,
+        output_dir=output_dir,
+        count=2,
+        runner=fake_warm_runner(calls),
+        clock=fake_warm_clock(),
+        environment_collector=fake_environment,
+        image_metadata_collector=fake_image_metadata,
+    )
+
+    validate_raw_benchmark_manifest(manifest)
+    assert output.exists()
+    assert len(calls) == 1
+    assert "--count" in calls[0]
+    assert "--allow-download" not in calls[0]
+    assert manifest["benchmark_class"] == "warm_persistent_diffusers"
+    assert manifest["runs"][0]["timing_source"] == "wrapper_total"
+    assert manifest["runs"][0]["output_count"] == 2
+    assert manifest["runs"][0]["output_seeds"] == [42, 43]
+    assert manifest["summary"]["output_count"] == 2
+    assert manifest["summary"]["amortized_wall_time_seconds_per_output"]["median"] == 15.0
+    assert manifest["image"]["path"].endswith("warm-0002.png")
+
+
+def test_run_warm_benchmark_rejects_unexpected_output_paths(tmp_path):
+    snapshot = tmp_path / "models--repo--name" / "snapshots" / ("a" * 40)
+    snapshot.mkdir(parents=True)
+    output = tmp_path / "warm.json"
+
+    with pytest.raises(RuntimeError, match="output path"):
+        run_warm_persistent_diffusers_benchmark(
+            prompt="koi",
+            snapshot=snapshot,
+            output=output,
+            output_dir=tmp_path / "warm-runs",
+            count=2,
+            runner=fake_warm_runner([], output_paths=["/etc/passwd", "/tmp/warm-0002.png"]),
+            clock=fake_warm_clock(),
+            environment_collector=fake_environment,
+            image_metadata_collector=fake_image_metadata,
+        )
+
+    assert not output.exists()
 
 
 def test_prompt_hash_is_deterministic():
@@ -236,8 +328,54 @@ def fake_runner():
     return run
 
 
+def fake_warm_runner(calls, output_paths=None):
+    def run(command):
+        calls.append(command)
+        output_dir = Path(command[command.index("--output-dir") + 1])
+        paths = output_paths or [str(output_dir / "warm-0001.png"), str(output_dir / "warm-0002.png")]
+        report = {
+            "count": 2,
+            "device": "mps",
+            "low_memory": True,
+            "model": "/local/snapshot",
+            "torch_dtype": "bfloat16",
+            "outputs": [
+                {
+                    "device": "mps",
+                    "height": 512,
+                    "low_memory": True,
+                    "model": "/local/snapshot",
+                    "output": paths[0],
+                    "seed": 42,
+                    "steps": 2,
+                    "torch_dtype": "bfloat16",
+                    "width": 512,
+                },
+                {
+                    "device": "mps",
+                    "height": 512,
+                    "low_memory": True,
+                    "model": "/local/snapshot",
+                    "output": paths[1],
+                    "seed": 43,
+                    "steps": 2,
+                    "torch_dtype": "bfloat16",
+                    "width": 512,
+                },
+            ],
+        }
+        return RunnerResult(0, "noise\n" + json.dumps(report), "stderr text", 200, 240)
+
+    return run
+
+
 def fake_clock():
     values = iter([0.0, 10.0, 10.0, 22.0, 22.0, 33.0])
+    return lambda: next(values)
+
+
+def fake_warm_clock():
+    values = iter([0.0, 30.0])
     return lambda: next(values)
 
 

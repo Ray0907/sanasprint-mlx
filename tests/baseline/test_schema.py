@@ -87,6 +87,34 @@ def raw_manifest():
     }
 
 
+def warm_manifest():
+    data = raw_manifest()
+    data["benchmark_class"] = "warm_persistent_diffusers"
+    data["runs"] = [
+        {
+            "index": 1,
+            "wall_time_seconds": 30.0,
+            "max_rss_bytes": 200,
+            "peak_footprint_bytes": 240,
+            "timing_source": "wrapper_total",
+            "output_count": 2,
+            "output_paths": ["/tmp/warm-0001.png", "/tmp/warm-0002.png"],
+            "output_seeds": [42, 43],
+            "success": True,
+        }
+    ]
+    data["summary"] = {
+        "run_count": 1,
+        "output_count": 2,
+        "total_wall_time_seconds": metric_summary(30.0, 30.0, 30.0),
+        "amortized_wall_time_seconds_per_output": metric_summary(15.0, 15.0, 15.0),
+        "max_rss_bytes": metric_summary(200, 200, 200),
+        "peak_footprint_bytes": metric_summary(240, 240, 240),
+    }
+    data["image"]["path"] = "/tmp/warm-0002.png"
+    return data
+
+
 def metric_summary(minimum, median, maximum):
     return {
         "min": minimum,
@@ -131,6 +159,75 @@ def test_valid_raw_manifest_passes():
     data = raw_manifest()
 
     assert validate_raw_benchmark_manifest(data) is data
+
+
+def test_valid_warm_raw_manifest_passes():
+    data = warm_manifest()
+
+    assert validate_raw_benchmark_manifest(data) is data
+
+
+def test_cold_manifest_rejects_warm_run_fields():
+    data = raw_manifest()
+    data["runs"][0]["timing_source"] = "wrapper_total"
+
+    with pytest.raises(ValueError, match="timing_source"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_cold_summary_shape():
+    data = warm_manifest()
+    data["summary"] = raw_manifest()["summary"]
+
+    with pytest.raises(ValueError, match="summary.amortized_wall_time_seconds_per_output"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_output_count_mismatch():
+    data = warm_manifest()
+    data["runs"][0]["output_count"] = 3
+
+    with pytest.raises(ValueError, match="output_count"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_unsafe_output_paths():
+    data = warm_manifest()
+    data["runs"][0]["output_paths"][0] = "/etc/passwd"
+
+    with pytest.raises(ValueError, match="output_paths"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_relative_output_path_traversal():
+    data = warm_manifest()
+    data["runs"][0]["output_paths"][0] = "benchmark-runs/../src/tracked.png"
+
+    with pytest.raises(ValueError, match="output_paths"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_accepts_absolute_ignored_repo_output_path():
+    data = warm_manifest()
+    data["runs"][0]["output_paths"][0] = str((__import__("pathlib").Path.cwd() / "benchmark-runs" / "warm-0001.png"))
+
+    validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_inconsistent_total_timing_summary():
+    data = warm_manifest()
+    data["summary"]["total_wall_time_seconds"] = metric_summary(99.0, 99.0, 99.0)
+
+    with pytest.raises(ValueError, match="total_wall_time_seconds"):
+        validate_raw_benchmark_manifest(data)
+
+
+def test_warm_manifest_rejects_inconsistent_amortized_timing_summary():
+    data = warm_manifest()
+    data["summary"]["amortized_wall_time_seconds_per_output"] = metric_summary(1.0, 1.0, 1.0)
+
+    with pytest.raises(ValueError, match="amortized_wall_time_seconds_per_output"):
+        validate_raw_benchmark_manifest(data)
 
 
 def test_valid_approved_baseline_passes():
