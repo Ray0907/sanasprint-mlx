@@ -2,7 +2,7 @@
 
 Experimental MLX inference project for `Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers`.
 
-Current status: fixture infrastructure, local weight inspection, memory feasibility estimates, small MLX primitive scaffolding, transformer denoiser contract scaffold, scheduler/denoising-loop scaffold, hybrid generation CLI, text-encoding cache/adapter scaffolding, AutoencoderDC decode scaffolding, baseline manifest validation, locked cold benchmarking, and real verification gate reporting are implemented. A real 512x512 image has been generated through the Diffusers reference pipeline on MPS. MLX-native transformer, text encoder, VAE decode, and loop parity remain blocked until opt-in fixtures or a local snapshot are provided.
+Current status: fixture infrastructure, local weight inspection, selective scaffold projection loading, memory feasibility estimates, small MLX primitive scaffolding, transformer denoiser contract scaffold, scheduler/denoising-loop scaffold, hybrid generation CLI, text-encoding cache/adapter scaffolding, AutoencoderDC decode scaffolding, baseline manifest validation, locked cold benchmarking, and real verification gate reporting are implemented. A real 512x512 image has been generated through the Diffusers reference pipeline on MPS. Full MLX-native transformer, text encoder, VAE decode, and loop parity remain blocked until parity fixtures pass.
 
 The first hardware target is Apple Silicon with 16GB unified memory. The runtime design uses sequential component loading, cached prompt embeddings, and explicit memory measurements so the 16GB path is tested instead of assumed.
 
@@ -99,6 +99,17 @@ PYTHONPATH=src python3 -m sanasprint_mlx.cli.weights inspect \
 
 The inspector reads local safetensors metadata only. It writes component parameter summaries and a conservative transformer key mapping report for later memory feasibility and parity work.
 
+Load the four scaffold projection tensors from a local snapshot without loading the full transformer safetensors file into memory:
+
+```bash
+PYTHONPATH=src python3 -m sanasprint_mlx.cli.weights load-scaffold \
+  --snapshot /path/to/Sana_Sprint_0.6B_1024px_diffusers \
+  --output /tmp/sanasprint-mlx-scaffold-load.json \
+  --dtype bfloat16
+```
+
+`load-scaffold` selectively reads `patch_embed.proj.weight`, `patch_embed.proj.bias`, `proj_out.weight`, and `proj_out.bias`, then binds them into the current MLX transformer scaffold. It validates shapes, rejects ambiguous duplicate mappings, and writes JSON diagnostics with source files, source dtypes, decoded dtypes, final MLX dtypes, and target shapes. This is a scaffold weight-binding check only; it is not full Sana transformer parity.
+
 ## Memory Feasibility
 
 Estimate the 16GB unified memory path from a local weight report:
@@ -117,7 +128,7 @@ The package includes small MLX-backed primitives for patchify/unpatchify, RMSNor
 
 ## Transformer Scaffold
 
-The transformer package currently provides a Diffusers-style forward contract, debug activation capture, parity helpers, and conservative weight-loader guardrails. It is not verified against real Sana weights yet. Feature 4 requires a real fixture at `SANASPRINT_MLX_REAL_FIXTURE` to pass Tier 2 full-transformer parity before it can be marked verified.
+The transformer package currently provides a Diffusers-style forward contract, debug activation capture, parity helpers, conservative weight-loader guardrails, and selective scaffold projection loading from local safetensors snapshots. It is not verified against the full real Sana transformer yet. Feature 4 requires a real fixture at `SANASPRINT_MLX_REAL_FIXTURE` to pass Tier 2 full-transformer parity before it can be marked verified.
 
 ## Scheduler Loop
 
