@@ -45,6 +45,7 @@ Homepage = "https://huggingface.co/Efficient-Large-Model/Sana_Sprint_0.6B_1024px
 
 [project.scripts]
 sanasprint-mlx-fixtures = "sanasprint_mlx.cli.fixtures:main"
+sanasprint-mlx-benchmark = "sanasprint_mlx.cli.benchmark:main"
 sanasprint-mlx-generate = "sanasprint_mlx.cli.generate:main"
 sanasprint-mlx-verify = "sanasprint_mlx.cli.verify:main"
 sanasprint-mlx-weights = "sanasprint_mlx.cli.weights:main"
