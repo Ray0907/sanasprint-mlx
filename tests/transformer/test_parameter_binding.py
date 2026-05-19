@@ -83,6 +83,13 @@ def test_scaffold_parameters_expose_mapper_compatible_snapshot_shapes_for_non_de
     np.testing.assert_array_equal(np.array(model.input_bias), np.zeros((3,), dtype=np.float32))
 
 
+def test_scaffold_parameters_do_not_expose_private_caption_projection_for_wide_caption_channels():
+    config = tiny_config(hidden_size=4, caption_channels=8)
+    model = SanaTransformerDenoiser(config)
+
+    assert list(model.parameters()) == SCAFFOLD_KEYS
+
+
 def test_scaffold_load_parameters_changes_forward_output():
     config = tiny_config()
     model = SanaTransformerDenoiser(config)
@@ -228,6 +235,27 @@ def test_load_scaffold_weights_from_snapshot_loads_four_synthetic_projection_ten
     assert diagnostics["source_tensors"][PATCH_WEIGHT]["source_shape"] == [4, 4, 1, 1]
     assert diagnostics["source_tensors"][PATCH_WEIGHT]["final_dtype"] == "float16"
     assert model.input_weight.dtype == mx.float16
+
+
+def test_loaded_synthetic_scaffold_can_forward_with_wide_caption_channels(tmp_path):
+    from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    config = tiny_config(hidden_size=4, in_channels=4, out_channels=4, caption_channels=8)
+    model = SanaTransformerDenoiser(config)
+
+    diagnostics = load_scaffold_weights_from_snapshot(model, snapshot, mlx_dtype=mx.float32)
+    output = model(
+        np.ones((1, config.in_channels, config.sample_size, config.sample_size), dtype=np.float32),
+        encoder_hidden_states=np.ones((1, 3, config.caption_channels), dtype=np.float32),
+        encoder_attention_mask=np.ones((1, 3), dtype=np.int32),
+        guidance=np.array([4.5], dtype=np.float32),
+        timestep=np.array([0.5], dtype=np.float32),
+    )[0]
+
+    assert diagnostics["loaded_keys"] == SCAFFOLD_KEYS
+    assert output.shape == (1, config.out_channels, config.sample_size, config.sample_size)
+    assert np.isfinite(np.array(output)).all()
 
 
 def test_load_scaffold_weights_from_snapshot_strict_mode_requires_all_four_keys(tmp_path):

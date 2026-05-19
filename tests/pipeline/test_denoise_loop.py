@@ -4,6 +4,8 @@ import numpy as np
 
 from sanasprint_mlx.pipeline.denoise import run_denoising_loop
 from sanasprint_mlx.scheduler.scm import SCMScheduler
+from sanasprint_mlx.transformer.config import SanaTransformerConfig
+from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
 
 
 class RecordingTransformer:
@@ -110,3 +112,33 @@ def test_denoise_loop_returns_debug_steps():
     assert len(result.debug_steps) == 2
     assert result.debug_steps[0]["step_index"] == 0
     assert result.debug_steps[0]["latent_shape"] == [1, 1, 2, 2]
+
+
+def test_denoise_loop_runs_with_real_scaffold_transformer_and_wide_caption_channels():
+    config = SanaTransformerConfig(
+        hidden_size=4,
+        in_channels=2,
+        out_channels=2,
+        caption_channels=8,
+        num_layers=1,
+        num_attention_heads=1,
+        attention_head_dim=4,
+        patch_size=1,
+        sample_size=2,
+        guidance_embeds_scale=1000.0,
+    )
+    transformer = SanaTransformerDenoiser(config)
+    scheduler = SCMScheduler()
+
+    result = run_denoising_loop(
+        transformer=transformer,
+        scheduler=scheduler,
+        latents=np.ones((1, 2, 2, 2), dtype=np.float32),
+        prompt_embeds=np.ones((1, 3, 8), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 3), dtype=np.int32),
+        num_inference_steps=1,
+        intermediate_timesteps=None,
+    )
+
+    assert result.latents.shape == (1, 2, 2, 2)
+    assert np.isfinite(np.array(result.latents)).all()

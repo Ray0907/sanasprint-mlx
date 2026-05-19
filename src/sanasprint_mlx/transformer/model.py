@@ -30,6 +30,8 @@ class SanaTransformerDenoiser:
         self.input_bias = mx.zeros((config.hidden_size,))
         self.output_weight = mx.ones((config.out_channels * config.patch_size * config.patch_size, config.hidden_size))
         self.output_bias = mx.zeros((config.out_channels * config.patch_size * config.patch_size,))
+        self.caption_projection_weight = self._build_caption_projection_weight()
+        self.caption_projection_bias = mx.zeros((config.hidden_size,))
 
     def parameters(self) -> dict:
         patch_shape = (
@@ -95,6 +97,13 @@ class SanaTransformerDenoiser:
         hidden_states = mx.array(hidden_states)
         encoder_hidden_states = mx.array(encoder_hidden_states)
         encoder_attention_mask = mx.array(encoder_attention_mask)
+        if len(encoder_hidden_states.shape) != 3:
+            raise ValueError("encoder_hidden_states shape must be (batch, sequence, caption_channels)")
+        if encoder_hidden_states.shape[-1] != self.config.caption_channels:
+            raise ValueError(
+                "encoder_hidden_states last dimension must equal config.caption_channels: "
+                f"expected {self.config.caption_channels}, got {encoder_hidden_states.shape[-1]}"
+            )
         if encoder_attention_mask.shape != encoder_hidden_states.shape[:2]:
             raise ValueError("encoder_attention_mask shape must match encoder hidden batch and sequence")
 
@@ -107,6 +116,9 @@ class SanaTransformerDenoiser:
         conditioning = conditioning_vector(timestep, guidance, dim=self.config.hidden_size)
         x = x + conditioning[:, None, :]
         capture.record("conditioning", conditioning)
+
+        encoder_hidden_states = self._project_encoder_hidden_states(encoder_hidden_states)
+        capture.record("caption_projection", encoder_hidden_states)
 
         for index, block in enumerate(self.blocks):
             x = block(x, encoder_hidden_states, encoder_attention_mask)
@@ -129,3 +141,14 @@ class SanaTransformerDenoiser:
                 result["debug"] = capture
             return result
         return (output, capture) if debug else (output,)
+
+    def _build_caption_projection_weight(self):
+        if self.config.caption_channels == self.config.hidden_size:
+            return mx.eye(self.config.hidden_size)
+        scale = 1.0 / float(self.config.caption_channels)
+        return mx.ones((self.config.hidden_size, self.config.caption_channels), dtype=mx.float32) * scale
+
+    def _project_encoder_hidden_states(self, encoder_hidden_states):
+        if self.config.caption_channels == self.config.hidden_size:
+            return encoder_hidden_states
+        return mx.matmul(encoder_hidden_states, self.caption_projection_weight.T) + self.caption_projection_bias
