@@ -11,6 +11,7 @@ from sanasprint_mlx.transformer.config import SanaTransformerConfig
 from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
 from sanasprint_mlx.transformer.weights import load_scaffold_weights_from_snapshot
 from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
+from sanasprint_mlx.weights.export import export_mlx_snapshot
 from sanasprint_mlx.weights.inspect import inspect_snapshot
 from sanasprint_mlx.weights.mapping import build_mapping_report
 
@@ -31,6 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     load_scaffold.add_argument("--output", required=True, type=Path)
     load_scaffold.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="float32")
     load_scaffold.add_argument("--include-caption-projection", action="store_true")
+
+    export_mlx = subparsers.add_parser("export-mlx", help="export a local snapshot into an MLX-loadable snapshot")
+    export_mlx.add_argument("--snapshot", required=True, type=Path)
+    export_mlx.add_argument("--output-dir", required=True, type=Path)
+    export_mlx.add_argument("--dtype", choices=("float32", "float16", "bfloat16"), default="bfloat16")
+    export_mlx.add_argument("--overwrite", action="store_true")
 
     return parser
 
@@ -65,6 +72,20 @@ def main(argv: list[str] | None = None) -> int:
             include_caption_projection=args.include_caption_projection,
         )
         print(f"wrote scaffold load report: {args.output}")
+        return 0
+
+    if args.command == "export-mlx":
+        if _looks_remote(args.snapshot):
+            parser.error("--snapshot must be a local path, not a remote URL")
+        if not args.snapshot.exists():
+            parser.error(f"snapshot path does not exist: {args.snapshot}")
+        manifest = export_mlx_snapshot(
+            args.snapshot,
+            args.output_dir,
+            dtype=args.dtype,
+            overwrite=args.overwrite,
+        )
+        print(f"wrote MLX snapshot: {args.output_dir} ({manifest['dtype']})")
         return 0
 
     parser.error(f"unknown command: {args.command}")

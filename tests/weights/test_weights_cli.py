@@ -86,6 +86,55 @@ def test_weights_cli_load_scaffold_can_include_caption_projection(tmp_path):
     ]
 
 
+def test_weights_cli_export_mlx_snapshot_writes_loadable_snapshot(tmp_path):
+    snapshot = tmp_path / "snapshot"
+    exported = tmp_path / "exported-mlx"
+    scaffold_report = tmp_path / "scaffold.json"
+    main(["make-synthetic-snapshot", "--output-dir", str(snapshot)])
+
+    result = main(["export-mlx", "--snapshot", str(snapshot), "--output-dir", str(exported), "--dtype", "float16"])
+
+    assert result == 0
+    assert (exported / "mlx_model.json").exists()
+    assert (exported / "README.md").exists()
+    assert (exported / "transformer" / "config.json").exists()
+    assert (exported / "transformer" / "model.safetensors").exists()
+    assert (exported / "text_encoder" / "model.safetensors").exists()
+    assert (exported / "vae" / "model.safetensors").exists()
+
+    manifest = json.loads((exported / "mlx_model.json").read_text())
+    assert manifest["format"] == "sanasprint-mlx-snapshot"
+    assert manifest["dtype"] == "float16"
+    assert manifest["components"]["transformer"]["tensor_count"] > 0
+    assert "Converted MLX snapshot" in (exported / "README.md").read_text()
+
+    load_result = main(
+        [
+            "load-scaffold",
+            "--snapshot",
+            str(exported),
+            "--output",
+            str(scaffold_report),
+            "--dtype",
+            "float16",
+            "--include-caption-projection",
+        ]
+    )
+    assert load_result == 0
+    loaded = json.loads(scaffold_report.read_text())
+    assert loaded["caption_projection_source"] == "real_weights"
+
+
+def test_weights_cli_export_mlx_rejects_remote_snapshot_path(tmp_path):
+    output = tmp_path / "exported"
+
+    with pytest.raises(SystemExit) as error:
+        main(["export-mlx", "--snapshot", "https://huggingface.co/example/model", "--output-dir", str(output)])
+
+    assert error.value.code == 2
+    assert not output.exists()
+
+
 def test_weights_cli_load_scaffold_rejects_remote_snapshot_path(tmp_path):
     output = tmp_path / "load-scaffold.json"
 

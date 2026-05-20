@@ -55,11 +55,15 @@ def _load_gemma2_hidden_state_model(text_encoder_path: Path, *, mx, gemma2):
     config = json.loads((text_encoder_path / "config.json").read_text())
     model = gemma2.Model(gemma2.ModelArgs.from_dict(config))
     weights = {}
-    for weight_file in sorted(text_encoder_path.glob("model-*.safetensors")):
+    for weight_file in _text_encoder_weight_files(text_encoder_path):
         weights.update({prefixed_mlx_lm_weight_key(key): value for key, value in mx.load(str(weight_file)).items()})
     model.load_weights(list(weights.items()), strict=True)
     model.eval()
     return model
+
+
+def _text_encoder_weight_files(text_encoder_path: Path) -> list[Path]:
+    return sorted(text_encoder_path.glob("model*.safetensors"))
 
 
 def _mlx_text_dependencies():

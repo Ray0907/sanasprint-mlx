@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from sanasprint_mlx.text.cache import read_prompt_cache
-from sanasprint_mlx.text.mlx_encoder import encode_prompt_mlx, prefixed_mlx_lm_weight_key
+from sanasprint_mlx.text.mlx_encoder import encode_prompt_mlx, prefixed_mlx_lm_weight_key, _text_encoder_weight_files
 
 
 SNAPSHOT = Path(
@@ -21,6 +21,19 @@ PROMPT = (
 def test_prefixed_mlx_lm_weight_key_adds_model_namespace():
     assert prefixed_mlx_lm_weight_key("layers.0.self_attn.q_proj.weight") == "model.layers.0.self_attn.q_proj.weight"
     assert prefixed_mlx_lm_weight_key("model.layers.0.self_attn.q_proj.weight") == "model.layers.0.self_attn.q_proj.weight"
+
+
+def test_text_encoder_weight_files_include_single_file_and_shards(tmp_path):
+    text_encoder = tmp_path / "text_encoder"
+    text_encoder.mkdir()
+    (text_encoder / "model.safetensors").write_bytes(b"")
+    (text_encoder / "model-00001-of-00002.safetensors").write_bytes(b"")
+    (text_encoder / "other.safetensors").write_bytes(b"")
+
+    assert [path.name for path in _text_encoder_weight_files(text_encoder)] == [
+        "model-00001-of-00002.safetensors",
+        "model.safetensors",
+    ]
 
 
 @pytest.mark.skipif(not SNAPSHOT.exists() or not PROMPT_CACHE.exists(), reason="real Sana snapshot and prompt cache are local fixtures")

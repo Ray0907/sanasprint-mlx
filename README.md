@@ -114,6 +114,28 @@ PYTHONPATH=src python3 -m sanasprint_mlx.cli.weights load-scaffold \
 
 `load-scaffold` selectively reads `patch_embed.proj.weight`, `patch_embed.proj.bias`, `proj_out.weight`, and `proj_out.bias`, then binds them into the current MLX transformer scaffold. It validates shapes, rejects ambiguous duplicate mappings, and writes JSON diagnostics with source files, source dtypes, decoded dtypes, final MLX dtypes, and target shapes. This is a scaffold weight-binding check only; it is not full Sana transformer parity.
 
+Export a local Diffusers snapshot into a native MLX-loadable snapshot:
+
+```bash
+.venv/bin/python -m sanasprint_mlx.cli.weights export-mlx \
+  --snapshot /path/to/Sana_Sprint_0.6B_1024px_diffusers \
+  --output-dir /tmp/sanasprint-mlx-exported-bf16 \
+  --dtype bfloat16
+```
+
+The exporter writes `mlx_model.json`, preserves the tokenizer and component configs, and rewrites component safetensors shard-by-shard with MLX so it does not need to hold every component in memory at once. The exported directory can be passed back to `sanasprint_mlx.cli.generate` as `--snapshot`.
+
+Latest local export smoke on Apple M4 with 16GB unified memory:
+
+- Export output: `/tmp/sanasprint-mlx-exported-bf16`
+- Export size: `6.6G`
+- Export wall time: `12.66s` from `/usr/bin/time -l`
+- Export peak memory: `4.68 GiB` peak footprint (`5,021,536,240` bytes)
+- Exported-snapshot generation: `768x768`, 2 inference steps, seed `42`, `--tiled-decode`
+- Generation wall time from exported snapshot: `11.51s` from `/usr/bin/time -l`; runtime report `9.26s`
+- Generation peak footprint: `5.51 GiB` (`5,911,614,720` bytes)
+- Output quality check: sharp translucent glass apple on a wet black surface, visible reflections, and no corrupt image output.
+
 ## Memory Feasibility
 
 Estimate the 16GB unified memory path from a local weight report:
