@@ -3,19 +3,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import mlx.core as mx
 import numpy as np
 
-from sanasprint_mlx.primitives.patch import patchify_nchw, unpatchify_nchw
-from sanasprint_mlx.transformer.block import RealSanaAttentionBlock
-from sanasprint_mlx.transformer.block_weights import load_block_attention_weights_from_snapshot
 from sanasprint_mlx.transformer.config import SanaTransformerConfig
-from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
-from sanasprint_mlx.transformer.output import SanaOutputNorm, load_output_norm_weights_from_snapshot
-from sanasprint_mlx.transformer.timestep import SanaTimestepGuidanceEmbedding, load_timestep_guidance_weights_from_snapshot
-from sanasprint_mlx.transformer.weights import load_scaffold_weights_from_snapshot
-from sanasprint_mlx.verification.block_attention import _grid_side
-from sanasprint_mlx.verification.scaffold_denoise import _latents, _mlx_dtype, _prompt_inputs
+from sanasprint_mlx.transformer.real_model import RealSanaTransformerDenoiser
+from sanasprint_mlx.verification.scaffold_denoise import _latents, _prompt_inputs
 from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
 
 
@@ -45,16 +37,13 @@ def run_real_block_denoise_smoke(
         raise ValueError("block_count must be less than or equal to num_layers")
 
     config = _transformer_config_from_summary(summary, sample_size=sample_size, num_layers=block_count)
-    model = SanaTransformerDenoiser(config)
-    mlx_dtype = _mlx_dtype(dtype)
 
     start = time.perf_counter()
-    scaffold_report = load_scaffold_weights_from_snapshot(
-        model,
+    transformer = RealSanaTransformerDenoiser.from_snapshot(
         snapshot_path,
-        mlx_dtype=mlx_dtype,
-        strict=True,
-        include_caption_projection=True,
+        sample_size=sample_size,
+        block_count=block_count,
+        dtype=dtype,
     )
     prompt_embeds, prompt_attention_mask, prompt_report = _prompt_inputs(
         config,
@@ -63,85 +52,22 @@ def run_real_block_denoise_smoke(
         sequence_length=prompt_sequence_length,
     )
     latents = _latents(config, seed=seed)
-    tokens = patchify_nchw(mx.array(latents), config.patch_size)
-    x = mx.matmul(tokens, model.input_weight.T) + model.input_bias
-    encoder_hidden_states = model._project_encoder_hidden_states(mx.array(prompt_embeds))
-    encoder_attention_mask = mx.array(prompt_attention_mask)
-    time_embedding = SanaTimestepGuidanceEmbedding(summary.hidden_size)
-    time_report = load_timestep_guidance_weights_from_snapshot(
-        time_embedding,
-        snapshot_path,
-        mlx_dtype=mlx_dtype,
-        strict=True,
-    )
     timestep_values = np.full((latents.shape[0],), timestep, dtype=np.float32)
     guidance = np.full((latents.shape[0],), guidance_scale * summary.guidance_embeds_scale, dtype=np.float32)
-    timestep_embedding, conditioning = time_embedding(timestep=timestep_values, guidance=guidance, hidden_dtype=mlx_dtype)
-    side = _grid_side(x.shape[1])
-
-    block_reports = []
-    for block_index in range(block_count):
-        block = RealSanaAttentionBlock(
-            hidden_size=summary.hidden_size,
-            num_attention_heads=summary.num_attention_heads,
-            attention_head_dim=summary.attention_head_dim,
-            num_cross_attention_heads=int(config_dict.get("num_cross_attention_heads", summary.num_attention_heads)),
-            cross_attention_head_dim=int(config_dict.get("cross_attention_head_dim", summary.attention_head_dim)),
-            block_index=block_index,
-            include_ffn=True,
-            mlp_ratio=float(config_dict.get("mlp_ratio", 2.5)),
-        )
-        weight_report = load_block_attention_weights_from_snapshot(
-            block,
-            snapshot_path,
-            block_index=block_index,
-            mlx_dtype=mlx_dtype,
-            strict=True,
-        )
-        x = block(
-            x,
-            encoder_hidden_states,
-            encoder_attention_mask,
-            timestep_embedding=timestep_embedding,
-            height=side,
-            width=side,
-        )
-        block_reports.append(
-            {
-                "block_index": block_index,
-                "loaded_keys": {
-                    "count": len(weight_report["loaded_keys"]),
-                    "keys": weight_report["loaded_keys"],
-                },
-                "weights": weight_report,
-            }
-        )
-
-    output_norm = SanaOutputNorm(summary.hidden_size)
-    output_norm_report = load_output_norm_weights_from_snapshot(
-        output_norm,
-        snapshot_path,
-        mlx_dtype=mlx_dtype,
-        strict=True,
-    )
-    x = output_norm(x, conditioning)
-    out_tokens = mx.matmul(x, model.output_weight.T) + model.output_bias
-    output = unpatchify_nchw(
-        out_tokens,
-        patch_size=config.patch_size,
-        height=sample_size,
-        width=sample_size,
-        channels=config.out_channels,
+    output = transformer(
+        latents,
+        encoder_hidden_states=prompt_embeds,
+        encoder_attention_mask=prompt_attention_mask,
+        guidance=guidance,
+        timestep=timestep_values,
+        return_dict=False,
     )
     elapsed = time.perf_counter() - start
 
-    output_array = np.array(output)
+    output_array = np.array(output[0])
     finite = bool(np.isfinite(output_array).all())
-    block_loaded_count = sum(block["loaded_keys"]["count"] for block in block_reports)
-    scaffold_count = len(scaffold_report["loaded_keys"])
-    caption_count = len(scaffold_report["loaded_caption_keys"])
-    time_embedding_count = len(time_report["loaded_keys"])
-    output_norm_count = len(output_norm_report["loaded_keys"])
+    weight_report = transformer.weight_report
+    tensor_dtype = str(transformer.dtype).removeprefix("mlx.core.")
     return {
         "status": "PASS" if finite else "FAIL",
         "snapshot_path": str(snapshot_path),
@@ -150,21 +76,14 @@ def run_real_block_denoise_smoke(
         "seed": seed,
         "sample_size": sample_size,
         "block_count": block_count,
-        "loaded_keys": {
-            "scaffold_count": scaffold_count,
-            "caption_count": caption_count,
-            "time_embedding_count": time_embedding_count,
-            "output_norm_count": output_norm_count,
-            "block_count": block_loaded_count,
-            "total_count": scaffold_count + caption_count + time_embedding_count + output_norm_count + block_loaded_count,
-        },
-        "caption_projection_source": scaffold_report["caption_projection_source"],
-        "time_embedding_source": time_report["source"],
-        "output_norm_source": output_norm_report["source"],
-        "scaffold_weights": scaffold_report,
-        "time_embedding_weights": time_report,
-        "output_norm_weights": output_norm_report,
-        "blocks": block_reports,
+        "loaded_keys": weight_report["loaded_keys"],
+        "caption_projection_source": weight_report["caption_projection_source"],
+        "time_embedding_source": weight_report["time_embedding_source"],
+        "output_norm_source": weight_report["output_norm_source"],
+        "scaffold_weights": weight_report["scaffold_weights"],
+        "time_embedding_weights": weight_report["time_embedding_weights"],
+        "output_norm_weights": weight_report["output_norm_weights"],
+        "blocks": weight_report["blocks"],
         "prompt_source": prompt_report["source"],
         "prompt_cache": prompt_report.get("cache"),
         "prompt": {
@@ -172,16 +91,20 @@ def run_real_block_denoise_smoke(
             "embeds_dtype": str(prompt_embeds.dtype),
             "attention_mask_shape": list(prompt_attention_mask.shape),
             "attention_mask_dtype": str(prompt_attention_mask.dtype),
-            "projected_shape": list(encoder_hidden_states.shape),
-            "projected_dtype": str(encoder_hidden_states.dtype),
+            "projected_shape": [
+                prompt_embeds.shape[0],
+                prompt_embeds.shape[1],
+                transformer.config.hidden_size,
+            ],
+            "projected_dtype": tensor_dtype,
         },
         "timestep": {
             "value": timestep,
             "guidance_scale": guidance_scale,
-            "embedding_shape": list(timestep_embedding.shape),
-            "embedding_dtype": str(timestep_embedding.dtype),
-            "conditioning_shape": list(conditioning.shape),
-            "conditioning_dtype": str(conditioning.dtype),
+            "embedding_shape": [latents.shape[0], 6 * transformer.config.hidden_size],
+            "embedding_dtype": tensor_dtype,
+            "conditioning_shape": [latents.shape[0], transformer.config.hidden_size],
+            "conditioning_dtype": tensor_dtype,
         },
         "latents": {
             "input_shape": list(latents.shape),
