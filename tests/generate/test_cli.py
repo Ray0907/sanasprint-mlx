@@ -303,6 +303,32 @@ def test_generate_cli_prompt_without_reference_uses_native_mlx_path(tmp_path, mo
     assert calls[0]["output"] == tmp_path / "out.png"
 
 
+def test_generate_cli_forwards_tiled_decode_to_native_mlx_path(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        kwargs["output"].write_bytes(b"png")
+        return {"output": str(kwargs["output"]), "mode": "mlx_transformer_mlx_decode"}
+
+    monkeypatch.setattr(generate_cli, "run_mlx_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "raw native prompt",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+            "--tiled-decode",
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["tiled_decode"] is True
+
+
 def test_generate_cli_reference_decode_uses_mlx_transformer_path(tmp_path, monkeypatch):
     calls = []
 

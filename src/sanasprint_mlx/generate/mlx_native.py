@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from sanasprint_mlx.autoencoder.config import AutoencoderDecodeConfig
+from sanasprint_mlx.autoencoder.decode import AutoencoderDCDecode
 from sanasprint_mlx.autoencoder.mlx_decoder import MLXAutoencoderDCDecoder
 from sanasprint_mlx.pipeline.denoise import run_denoising_loop
 from sanasprint_mlx.scheduler.scm import SCMScheduler
@@ -31,6 +33,7 @@ def run_mlx_generation(
     output: str | Path,
     snapshot: str | Path | None,
     mlx_dtype: str = "bfloat16",
+    tiled_decode: bool = False,
 ) -> dict:
     start = time.perf_counter()
     snapshot_path = _require_local_snapshot(snapshot)
@@ -68,7 +71,11 @@ def run_mlx_generation(
     del transformer, result
     _release_mlx_memory()
     decoder = MLXAutoencoderDCDecoder.from_snapshot(snapshot_path, dtype=mlx_dtype)
-    decoded = np.array(decoder.decode(denoised_latents / _scaling_factor(snapshot_path)))
+    decoded = _decode_latents(
+        decoder,
+        denoised_latents / _scaling_factor(snapshot_path),
+        tiled_decode=tiled_decode,
+    )
     image = _postprocess(decoded[0])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
@@ -82,11 +89,30 @@ def run_mlx_generation(
         "seed": seed,
         "mlx_dtype": mlx_dtype,
         "prompt_source": prompt_source,
+        "decode_mode": "tiled_mlx_decode" if tiled_decode else "mlx_decode",
         "latents_shape": latents_shape,
         "loaded_keys": loaded_keys,
         "runtime": {"wall_time_seconds": time.perf_counter() - start},
         "memory": {"max_rss_bytes": _max_rss_bytes()},
     }
+
+
+def _decode_latents(decoder: MLXAutoencoderDCDecoder, latents: np.ndarray, *, tiled_decode: bool) -> np.ndarray:
+    if not tiled_decode:
+        return np.array(decoder.decode(latents))
+    wrapped = AutoencoderDCDecode(
+        _DecoderCallable(decoder),
+        AutoencoderDecodeConfig(use_tiling=True),
+    )
+    return np.asarray(wrapped.decode(latents, return_dict=False)[0])
+
+
+class _DecoderCallable:
+    def __init__(self, decoder: MLXAutoencoderDCDecoder):
+        self.decoder = decoder
+
+    def __call__(self, latents):
+        return np.array(self.decoder.decode(np.asarray(latents, dtype=np.float32)))
 
 
 def _prompt_inputs(

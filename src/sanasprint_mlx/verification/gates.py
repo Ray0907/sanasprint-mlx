@@ -134,12 +134,13 @@ def _snapshot_gate(snapshot, allow_download: bool) -> dict:
 def _smoke_gate(size: int, snapshot, allow_download: bool, evidence: dict) -> dict:
     del allow_download
     gate_id = f"smoke_{size}"
+    tiled_decode_arg = " --tiled-decode" if size > 512 else ""
     command = (
         "sanasprint-mlx-generate "
         f"--prompt 'a tiny astronaut hatching from an egg on the moon' --height {size} --width {size} "
         "--steps 2 --seed 7 "
         f"--snapshot {snapshot or '/path/to/Sana_Sprint_0.6B_1024px_diffusers'} "
-        f"--output /tmp/sanasprint-mlx-{size}.png --low-memory"
+        f"--output /tmp/sanasprint-mlx-{size}.png --low-memory{tiled_decode_arg}"
     )
     if gate_id in evidence["gates"]:
         item = dict(evidence["gates"][gate_id])

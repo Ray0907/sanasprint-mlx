@@ -164,3 +164,48 @@ def test_mlx_generation_releases_transformer_before_loading_decoder(tmp_path, mo
     )
 
     assert events == ["load_transformer", "denoise", "release", "load_decoder"]
+
+
+def test_mlx_generation_uses_tiled_decode_wrapper_when_requested(tmp_path, monkeypatch):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    calls = {}
+
+    class FakeDecodeWrapper:
+        def __init__(self, decoder, config):
+            calls["wrapper"] = {"decoder": decoder, "config": config}
+
+        def decode(self, latents, *, return_dict):
+            calls["decode"] = {"latents": np.array(latents), "return_dict": return_dict}
+            return (np.zeros((1, 3, 2, 2), dtype=np.float32),)
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", lambda *args, **kwargs: FakeTransformer())
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", lambda *args, **kwargs: FakeDecoder())
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", lambda **kwargs: FakeLoopResult())
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.AutoencoderDCDecode", FakeDecodeWrapper)
+
+    report = run_mlx_generation(
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=7,
+        output=tmp_path / "out.png",
+        snapshot=snapshot,
+        tiled_decode=True,
+    )
+
+    assert report["decode_mode"] == "tiled_mlx_decode"
+    assert calls["wrapper"]["config"].use_tiling is True
+    assert calls["decode"]["return_dict"] is False

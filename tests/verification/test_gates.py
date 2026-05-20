@@ -292,3 +292,10 @@ def test_smoke_gate_blocks_remote_snapshot_even_when_download_allowed():
     assert gate(report, "smoke_512")["status"] == "BLOCKED"
     assert "local snapshot" in gate(report, "smoke_512")["reason"]
     assert "--reference-pipeline" not in gate(report, "smoke_512")["command"]
+
+
+def test_768_smoke_command_uses_tiled_decode(tmp_path):
+    report = build_verification_report(env={}, snapshot=tmp_path)
+
+    assert "--tiled-decode" in gate(report, "smoke_768")["command"]
+    assert "--tiled-decode" not in gate(report, "smoke_512")["command"]

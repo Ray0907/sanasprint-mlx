@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 output=args.output,
                 snapshot=args.snapshot,
+                tiled_decode=args.tiled_decode,
             )
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             return _error(str(error))
