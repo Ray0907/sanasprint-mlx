@@ -21,10 +21,12 @@ def test_real_block_denoise_smoke_runs_scaffold_caption_and_two_real_blocks(tmp_
     assert report["scope"] == "real_block_denoise_smoke_not_full_model_parity"
     assert report["block_count"] == 2
     assert report["caption_projection_source"] == "real_weights"
+    assert report["time_embedding_source"] == "real_weights"
     assert report["loaded_keys"]["scaffold_count"] == 4
     assert report["loaded_keys"]["caption_count"] == 5
+    assert report["loaded_keys"]["time_embedding_count"] == 10
     assert report["loaded_keys"]["block_count"] == 46
-    assert report["loaded_keys"]["total_count"] == 55
+    assert report["loaded_keys"]["total_count"] == 65
     assert [block["loaded_keys"]["count"] for block in report["blocks"]] == [23, 23]
     assert report["latents"]["input_shape"] == [1, 4, 2, 2]
     assert report["output"]["shape"] == [1, 4, 2, 2]

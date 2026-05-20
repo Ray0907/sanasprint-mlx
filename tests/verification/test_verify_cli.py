@@ -202,7 +202,7 @@ def test_verify_cli_real_block_denoise_writes_report(tmp_path):
     report = json.loads(output.read_text())
     assert report["status"] == "PASS"
     assert report["block_count"] == 2
-    assert report["loaded_keys"]["total_count"] == 55
+    assert report["loaded_keys"]["total_count"] == 65
 
 
 def test_verify_cli_real_block_denoise_accepts_prompt_cache(tmp_path):

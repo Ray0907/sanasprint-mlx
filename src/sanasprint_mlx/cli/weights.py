@@ -113,6 +113,7 @@ def make_synthetic_snapshot(output_dir: str | Path, *, num_layers: int = 1) -> P
         "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
         "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
     }
+    transformer_tensors.update(_synthetic_time_embedding_tensors())
     for block_index in range(num_layers):
         transformer_tensors.update(_synthetic_block_attention_tensors(block_index=block_index))
         transformer_tensors.update(_synthetic_block_ffn_tensors(block_index=block_index))
@@ -153,6 +154,23 @@ def _synthetic_block_ffn_tensors(*, block_index: int = 0) -> dict[str, np.ndarra
         f"{prefix}.conv_depth.weight": np.zeros((hidden_channels * 2, 1, 3, 3), dtype=np.float32),
         f"{prefix}.conv_depth.bias": np.zeros((hidden_channels * 2,), dtype=np.float32),
         f"{prefix}.conv_point.weight": np.zeros((hidden_size, hidden_channels, 1, 1), dtype=np.float32),
+    }
+
+
+def _synthetic_time_embedding_tensors() -> dict[str, np.ndarray]:
+    hidden_size = 4
+    prefix = "time_embed"
+    return {
+        f"{prefix}.timestep_embedder.linear_1.weight": np.zeros((hidden_size, 256), dtype=np.float32),
+        f"{prefix}.timestep_embedder.linear_1.bias": np.zeros((hidden_size,), dtype=np.float32),
+        f"{prefix}.timestep_embedder.linear_2.weight": np.zeros((hidden_size, hidden_size), dtype=np.float32),
+        f"{prefix}.timestep_embedder.linear_2.bias": np.zeros((hidden_size,), dtype=np.float32),
+        f"{prefix}.guidance_embedder.linear_1.weight": np.zeros((hidden_size, 256), dtype=np.float32),
+        f"{prefix}.guidance_embedder.linear_1.bias": np.zeros((hidden_size,), dtype=np.float32),
+        f"{prefix}.guidance_embedder.linear_2.weight": np.zeros((hidden_size, hidden_size), dtype=np.float32),
+        f"{prefix}.guidance_embedder.linear_2.bias": np.zeros((hidden_size,), dtype=np.float32),
+        f"{prefix}.linear.weight": np.zeros((6 * hidden_size, hidden_size), dtype=np.float32),
+        f"{prefix}.linear.bias": np.zeros((6 * hidden_size,), dtype=np.float32),
     }
 
 
