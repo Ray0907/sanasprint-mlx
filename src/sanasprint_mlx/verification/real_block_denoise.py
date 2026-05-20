@@ -21,6 +21,7 @@ def run_real_block_denoise_smoke(
     snapshot: str | Path,
     *,
     dtype: str = "bfloat16",
+    prompt_cache: str | Path | None = None,
     seed: int = 0,
     sample_size: int = 2,
     prompt_sequence_length: int = 4,
@@ -53,7 +54,7 @@ def run_real_block_denoise_smoke(
     )
     prompt_embeds, prompt_attention_mask, prompt_report = _prompt_inputs(
         config,
-        prompt_cache=None,
+        prompt_cache=prompt_cache,
         seed=seed,
         sequence_length=prompt_sequence_length,
     )
@@ -136,6 +137,7 @@ def run_real_block_denoise_smoke(
         "scaffold_weights": scaffold_report,
         "blocks": block_reports,
         "prompt_source": prompt_report["source"],
+        "prompt_cache": prompt_report.get("cache"),
         "prompt": {
             "embeds_shape": list(prompt_embeds.shape),
             "embeds_dtype": str(prompt_embeds.dtype),

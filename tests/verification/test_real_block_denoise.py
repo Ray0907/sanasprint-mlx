@@ -1,6 +1,7 @@
 import pytest
 
 from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+from sanasprint_mlx.text.cache import write_prompt_cache
 from sanasprint_mlx.verification.real_block_denoise import run_real_block_denoise_smoke
 
 
@@ -35,3 +36,26 @@ def test_real_block_denoise_smoke_rejects_block_count_larger_than_config(tmp_pat
 
     with pytest.raises(ValueError, match="block_count must be less than or equal to num_layers"):
         run_real_block_denoise_smoke(snapshot, block_count=2)
+
+
+def test_real_block_denoise_smoke_accepts_prompt_cache(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot", num_layers=2)
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=[[[-0.25, 0.5, 0.75, 1.0], [0.1, 0.2, 0.3, 0.4]]],
+        prompt_attention_mask=[[1, 1]],
+        tokenizer_id="fake",
+        model_id="fake-text",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+
+    report = run_real_block_denoise_smoke(snapshot, prompt_cache=cache, sample_size=2)
+
+    assert report["status"] == "PASS"
+    assert report["prompt_source"] == "prompt_cache"
+    assert report["prompt_cache"]["path"] == str(cache)
+    assert report["prompt"]["embeds_shape"] == [1, 2, 4]

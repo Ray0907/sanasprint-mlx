@@ -203,3 +203,39 @@ def test_verify_cli_real_block_denoise_writes_report(tmp_path):
     assert report["status"] == "PASS"
     assert report["block_count"] == 2
     assert report["loaded_keys"]["total_count"] == 55
+
+
+def test_verify_cli_real_block_denoise_accepts_prompt_cache(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot", num_layers=2)
+    cache = tmp_path / "prompt-cache"
+    output = tmp_path / "real-block-denoise.json"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake-text",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+
+    code = main(
+        [
+            "real-block-denoise",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--prompt-cache",
+            str(cache),
+            "--sample-size",
+            "2",
+        ]
+    )
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["prompt_source"] == "prompt_cache"
+    assert report["prompt_cache"]["path"] == str(cache)

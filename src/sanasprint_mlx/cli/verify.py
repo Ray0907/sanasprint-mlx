@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_block_denoise.add_argument("--snapshot", required=True)
     real_block_denoise.add_argument("--output", required=True, type=Path)
+    real_block_denoise.add_argument("--prompt-cache", type=Path)
     real_block_denoise.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
     real_block_denoise.add_argument("--seed", type=int, default=0)
     real_block_denoise.add_argument("--sample-size", type=int, default=2)
@@ -115,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             report = run_real_block_denoise_smoke(
                 args.snapshot,
                 dtype=args.dtype,
+                prompt_cache=args.prompt_cache,
                 seed=args.seed,
                 sample_size=args.sample_size,
                 prompt_sequence_length=args.prompt_sequence_length,
