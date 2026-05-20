@@ -7,6 +7,18 @@ Current status: the primary text-to-image path is native MLX end to end for Sana
 The first hardware target is Apple Silicon with 16GB unified memory. The runtime design uses sequential component loading, prompt-cache support, and explicit memory measurements so the 16GB path is tested instead of assumed.
 Native generation clamps the MLX allocator cache during runs to reduce macOS peak footprint after component transitions.
 
+## Runtime And Weights
+
+This GitHub repository contains the runtime, exporter, tests, and examples. It does not vendor the full model weights.
+
+The converted MLX weights are published separately on Hugging Face:
+
+- Model weights: `RayyTien/SanaSprint-0.6B-1024px-MLX`
+- Runtime: this `sanasprint-mlx` package
+- Relationship: the Hugging Face model repo is not a standalone Diffusers pipeline; it is a converted weight snapshot for this native MLX runtime.
+
+This project targets SanaSprint text-to-image inference. It is not SANA-WM, SANA-Video, or a world-model runtime.
+
 ## Showcase
 
 ![SanaSprint native MLX tiled showcase](assets/showcase-native-mlx-tiled-768.png)
@@ -150,6 +162,16 @@ Latest local export smoke on Apple M4 with 16GB unified memory:
 - Generation wall time from exported snapshot: `11.51s` from `/usr/bin/time -l`; runtime report `9.26s`
 - Generation peak footprint: `5.51 GiB` (`5,911,614,720` bytes)
 - Output quality check: sharp translucent glass apple on a wet black surface, visible reflections, and no corrupt image output.
+
+Latest Hugging Face direct smoke after upload:
+
+- Snapshot: `RayyTien/SanaSprint-0.6B-1024px-MLX`
+- First run behavior: fetched `17` files from Hugging Face, then generated from the cached snapshot
+- Resolved cache path: `models--RayyTien--SanaSprint-0.6B-1024px-MLX/snapshots/1db1436411076602cc00728129b1b24b63f5b7dc`
+- Image: `768x768`, 2 inference steps, seed `42`, `--tiled-decode`
+- First run wall time including download: `118.89s`
+- Peak footprint: `5.63 GiB` (`6,044,653,760` bytes)
+- Output quality check: translucent glass apple on a wet black surface, visible reflections, and no corrupt image output.
 
 ## Memory Feasibility
 
