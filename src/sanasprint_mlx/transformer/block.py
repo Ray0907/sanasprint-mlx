@@ -34,6 +34,8 @@ class RealSanaAttentionBlock:
         num_cross_attention_heads: int,
         cross_attention_head_dim: int,
         block_index: int = 0,
+        include_ffn: bool = False,
+        mlp_ratio: float = 2.5,
     ):
         if num_attention_heads * attention_head_dim != hidden_size:
             raise ValueError("num_attention_heads * attention_head_dim must equal hidden_size")
@@ -45,6 +47,8 @@ class RealSanaAttentionBlock:
         self.num_cross_attention_heads = num_cross_attention_heads
         self.cross_attention_head_dim = cross_attention_head_dim
         self.block_index = block_index
+        self.include_ffn = include_ffn
+        self.ffn_hidden_channels = int(mlp_ratio * hidden_size)
         self._parameters = {
             key: mx.array(shape_value)
             for key, shape_value in _initial_attention_parameters(
@@ -54,6 +58,8 @@ class RealSanaAttentionBlock:
                 num_cross_attention_heads=num_cross_attention_heads,
                 cross_attention_head_dim=cross_attention_head_dim,
                 block_index=block_index,
+                include_ffn=include_ffn,
+                ffn_hidden_channels=self.ffn_hidden_channels,
             ).items()
         }
 
@@ -78,18 +84,35 @@ class RealSanaAttentionBlock:
                 raise ValueError(f"{key}: expected shape {expected[key]}, got {tuple(tensor.shape)}")
             self._parameters[key] = tensor
 
-    def __call__(self, x, encoder_hidden_states, encoder_attention_mask=None, *, timestep_embedding=None):
+    def __call__(
+        self,
+        x,
+        encoder_hidden_states,
+        encoder_attention_mask=None,
+        *,
+        timestep_embedding=None,
+        height: int | None = None,
+        width: int | None = None,
+    ):
         x = mx.array(x)
         encoder_hidden_states = mx.array(encoder_hidden_states)
         norm_x = _layer_norm(x)
-        gate_msa = None
+        gate_msa = shift_mlp = scale_mlp = gate_mlp = None
         if timestep_embedding is not None:
-            shift_msa, scale_msa, gate_msa = self._self_attention_modulation(timestep_embedding)
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self._block_modulation(timestep_embedding)
             norm_x = norm_x * (1 + scale_msa) + shift_msa
         self_output = self._self_attention(norm_x)
         x = x + (gate_msa * self_output if gate_msa is not None else self_output)
         cross_output = self._cross_attention(x, encoder_hidden_states, encoder_attention_mask)
-        return x + cross_output
+        x = x + cross_output
+        if self.include_ffn:
+            height, width = _resolve_grid(x.shape[1], height=height, width=width)
+            norm_x = _layer_norm(x)
+            if shift_mlp is not None and scale_mlp is not None:
+                norm_x = norm_x * (1 + scale_mlp) + shift_mlp
+            ffn_output = self._ffn(norm_x, height=height, width=width)
+            x = x + (gate_mlp * ffn_output if gate_mlp is not None else ffn_output)
+        return x
 
     def _self_attention(self, x):
         prefix = self._prefix("attn1")
@@ -135,7 +158,7 @@ class RealSanaAttentionBlock:
     def _prefix(self, attention_name: str) -> str:
         return f"mlx_transformer.transformer_blocks.{self.block_index}.{attention_name}"
 
-    def _self_attention_modulation(self, timestep_embedding):
+    def _block_modulation(self, timestep_embedding):
         timestep_embedding = mx.array(timestep_embedding)
         batch = timestep_embedding.shape[0]
         timestep_embedding = timestep_embedding.reshape(batch, -1)
@@ -144,7 +167,35 @@ class RealSanaAttentionBlock:
             raise ValueError(f"timestep_embedding must have {expected_size} values per batch item")
         prefix = f"mlx_transformer.transformer_blocks.{self.block_index}"
         modulation = self._parameters[f"{prefix}.scale_shift_table"][None] + timestep_embedding.reshape(batch, 6, self.hidden_size)
-        return modulation[:, 0:1], modulation[:, 1:2], modulation[:, 2:3]
+        return (
+            modulation[:, 0:1],
+            modulation[:, 1:2],
+            modulation[:, 2:3],
+            modulation[:, 3:4],
+            modulation[:, 4:5],
+            modulation[:, 5:6],
+        )
+
+    def _ffn(self, x, *, height: int, width: int):
+        prefix = f"mlx_transformer.transformer_blocks.{self.block_index}.ff"
+        batch, tokens, channels = x.shape
+        image = x.reshape(batch, height, width, channels)
+        hidden = _conv2d_nhwc(
+            image,
+            self._parameters[f"{prefix}.conv_inverted.weight"],
+            self._parameters[f"{prefix}.conv_inverted.bias"],
+        )
+        hidden = _silu(hidden)
+        hidden = _depthwise_conv2d_nhwc(
+            hidden,
+            self._parameters[f"{prefix}.conv_depth.weight"],
+            self._parameters[f"{prefix}.conv_depth.bias"],
+            padding=1,
+        )
+        hidden, gate = mx.split(hidden, 2, axis=-1)
+        hidden = hidden * _silu(gate)
+        hidden = _conv2d_nhwc(hidden, self._parameters[f"{prefix}.conv_point.weight"])
+        return hidden.reshape(batch, tokens, channels)
 
 
 def _initial_attention_parameters(
@@ -155,6 +206,8 @@ def _initial_attention_parameters(
     num_cross_attention_heads: int,
     cross_attention_head_dim: int,
     block_index: int,
+    include_ffn: bool = False,
+    ffn_hidden_channels: int | None = None,
 ) -> dict[str, object]:
     del num_attention_heads, attention_head_dim, num_cross_attention_heads, cross_attention_head_dim
     prefix = f"mlx_transformer.transformer_blocks.{block_index}"
@@ -167,7 +220,20 @@ def _initial_attention_parameters(
         params[f"{prefix}.{attention}.norm_k.weight"] = mx.ones((hidden_size,))
     for projection in ("to_q", "to_k", "to_v"):
         params[f"{prefix}.attn2.{projection}.bias"] = mx.zeros((hidden_size,))
+    if include_ffn:
+        ffn_hidden_channels = int(ffn_hidden_channels or hidden_size)
+        params.update(_initial_ffn_parameters(hidden_size, ffn_hidden_channels, prefix=f"{prefix}.ff"))
     return params
+
+
+def _initial_ffn_parameters(hidden_size: int, hidden_channels: int, *, prefix: str) -> dict[str, object]:
+    return {
+        f"{prefix}.conv_inverted.weight": mx.zeros((hidden_channels * 2, hidden_size, 1, 1)),
+        f"{prefix}.conv_inverted.bias": mx.zeros((hidden_channels * 2,)),
+        f"{prefix}.conv_depth.weight": mx.zeros((hidden_channels * 2, 1, 3, 3)),
+        f"{prefix}.conv_depth.bias": mx.zeros((hidden_channels * 2,)),
+        f"{prefix}.conv_point.weight": mx.zeros((hidden_size, hidden_channels, 1, 1)),
+    }
 
 
 def _layer_norm(x, eps: float = 1e-6):
@@ -204,3 +270,35 @@ def _scaled_attention(query, key, value, *, heads: int, head_dim: int, mask=None
     weights = mx.softmax(scores, axis=-1)
     output = mx.matmul(weights, value)
     return output.transpose(0, 2, 1, 3).reshape(batch, query_tokens, heads * head_dim)
+
+
+def _silu(x):
+    x = mx.array(x)
+    return x * mx.sigmoid(x)
+
+
+def _conv2d_nhwc(x, torch_weight, bias=None):
+    weight = mx.array(torch_weight).transpose(0, 2, 3, 1)
+    output = mx.conv2d(mx.array(x), weight)
+    if bias is not None:
+        output = output + mx.array(bias)
+    return output
+
+
+def _depthwise_conv2d_nhwc(x, torch_weight, bias=None, padding=0):
+    weight = mx.array(torch_weight).transpose(0, 2, 3, 1)
+    output = mx.conv2d(mx.array(x), weight, padding=padding, groups=weight.shape[0])
+    if bias is not None:
+        output = output + mx.array(bias)
+    return output
+
+
+def _resolve_grid(tokens: int, *, height: int | None, width: int | None) -> tuple[int, int]:
+    if height is not None and width is not None:
+        if height * width != tokens:
+            raise ValueError("height * width must equal token count")
+        return height, width
+    side = int(math.sqrt(tokens))
+    if side * side != tokens:
+        raise ValueError("height and width are required when token count is not a square")
+    return side, side

@@ -29,6 +29,8 @@ def run_block0_attention_smoke(
         num_cross_attention_heads=int(config.get("num_cross_attention_heads", summary.num_attention_heads)),
         cross_attention_head_dim=int(config.get("cross_attention_head_dim", summary.attention_head_dim)),
         block_index=0,
+        include_ffn=True,
+        mlp_ratio=float(config.get("mlp_ratio", 2.5)),
     )
 
     start = time.perf_counter()
@@ -52,6 +54,8 @@ def run_block0_attention_smoke(
             encoder_hidden_states,
             encoder_attention_mask,
             timestep_embedding=timestep_embedding,
+            height=_grid_side(sequence_length),
+            width=_grid_side(sequence_length),
         )
     )
     elapsed = time.perf_counter() - start
@@ -60,7 +64,7 @@ def run_block0_attention_smoke(
         "status": "PASS" if finite else "FAIL",
         "snapshot_path": str(snapshot_path),
         "block_index": 0,
-        "scope": "attention_core_with_timestep_modulation_not_full_block_parity",
+        "scope": "block0_core_with_timestep_modulation_not_full_model_parity",
         "dtype": dtype,
         "seed": seed,
         "loaded_keys": {
@@ -78,6 +82,10 @@ def run_block0_attention_smoke(
         "timestep": {
             "embedding_shape": list(timestep_embedding.shape),
             "embedding_dtype": str(timestep_embedding.dtype),
+        },
+        "ffn": {
+            "active": True,
+            "grid_shape": [_grid_side(sequence_length), _grid_side(sequence_length)],
         },
         "output": {
             "shape": list(output.shape),
@@ -110,6 +118,13 @@ def _prompt_inputs(
 def _timestep_embedding(hidden_size: int, *, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed + 13)
     return rng.standard_normal((1, 6 * hidden_size), dtype=np.float32)
+
+
+def _grid_side(sequence_length: int) -> int:
+    side = int(sequence_length**0.5)
+    if side * side != sequence_length:
+        raise ValueError("sequence_length must be a square when FFN is active")
+    return side
 
 
 def _mlx_dtype(dtype: str):

@@ -8,15 +8,17 @@ from sanasprint_mlx.verification.block_attention import run_block0_attention_smo
 def test_block0_attention_smoke_loads_synthetic_snapshot_weights(tmp_path):
     snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
 
-    report = run_block0_attention_smoke(snapshot, dtype="float16", seed=123, sequence_length=3)
+    report = run_block0_attention_smoke(snapshot, dtype="float16", seed=123, sequence_length=4)
 
     assert report["status"] == "PASS"
     assert report["block_index"] == 0
-    assert report["scope"] == "attention_core_with_timestep_modulation_not_full_block_parity"
+    assert report["scope"] == "block0_core_with_timestep_modulation_not_full_model_parity"
     assert report["prompt_source"] == "synthetic_projected_hidden_states"
-    assert report["loaded_keys"]["count"] == 18
+    assert report["loaded_keys"]["count"] == 23
+    assert report["ffn"]["active"] is True
+    assert report["ffn"]["grid_shape"] == [2, 2]
     assert report["timestep"]["embedding_shape"] == [1, 24]
-    assert report["output"]["shape"] == [1, 3, 4]
+    assert report["output"]["shape"] == [1, 4, 4]
     assert report["output"]["finite"] is True
     assert report["weights"]["source_tensors"]["mlx_transformer.transformer_blocks.0.attn1.to_q.weight"]["final_dtype"] == "float16"
 

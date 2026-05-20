@@ -148,4 +148,4 @@ def test_verify_cli_block0_attention_writes_report(tmp_path):
     assert code == 0
     report = json.loads(output.read_text())
     assert report["status"] == "PASS"
-    assert report["loaded_keys"]["count"] == 18
+    assert report["loaded_keys"]["count"] == 23

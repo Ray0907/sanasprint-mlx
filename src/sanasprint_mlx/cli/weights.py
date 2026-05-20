@@ -91,6 +91,7 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
                 "caption_channels": 4,
                 "sample_size": 2,
                 "patch_size": 1,
+                "mlp_ratio": 2.0,
                 "guidance_embeds_scale": 1000.0,
             },
             indent=2,
@@ -111,6 +112,7 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
     }
     transformer_tensors.update(_synthetic_block_attention_tensors())
+    transformer_tensors.update(_synthetic_block_ffn_tensors())
     save_file(transformer_tensors, transformer_dir / "model.safetensors")
     save_file(
         {"text_encoder.embed_tokens.weight": np.zeros((8, 4), dtype=np.float16)},
@@ -136,6 +138,19 @@ def _synthetic_block_attention_tensors() -> dict[str, np.ndarray]:
     for projection in ("to_q", "to_k", "to_v"):
         tensors[f"{prefix}.attn2.{projection}.bias"] = np.zeros((4,), dtype=np.float32)
     return tensors
+
+
+def _synthetic_block_ffn_tensors() -> dict[str, np.ndarray]:
+    hidden_size = 4
+    hidden_channels = 8
+    prefix = "transformer_blocks.0.ff"
+    return {
+        f"{prefix}.conv_inverted.weight": np.zeros((hidden_channels * 2, hidden_size, 1, 1), dtype=np.float32),
+        f"{prefix}.conv_inverted.bias": np.zeros((hidden_channels * 2,), dtype=np.float32),
+        f"{prefix}.conv_depth.weight": np.zeros((hidden_channels * 2, 1, 3, 3), dtype=np.float32),
+        f"{prefix}.conv_depth.bias": np.zeros((hidden_channels * 2,), dtype=np.float32),
+        f"{prefix}.conv_point.weight": np.zeros((hidden_size, hidden_channels, 1, 1), dtype=np.float32),
+    }
 
 
 def write_inspection_report(snapshot: str | Path, output: str | Path) -> Path:
