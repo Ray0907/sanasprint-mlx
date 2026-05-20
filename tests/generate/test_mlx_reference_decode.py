@@ -27,6 +27,7 @@ class FakeTensor:
 
 class FakePipeline:
     vae_scale_factor = 1
+    last_from_pretrained_kwargs = None
 
     def __init__(self):
         self.transformer = type("Transformer", (), {"config": type("Config", (), {"in_channels": 4})()})()
@@ -48,6 +49,7 @@ class FakePipeline:
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
+        cls.last_from_pretrained_kwargs = kwargs
         return cls()
 
     def to(self, device):
@@ -105,5 +107,6 @@ def test_mlx_reference_decode_runs_mlx_loop_and_writes_png(tmp_path, monkeypatch
     assert output.read_bytes() == b"png"
     assert report["mode"] == "mlx_transformer_reference_decode"
     assert report["loaded_keys"]["total_count"] == 7
+    assert FakePipeline.last_from_pretrained_kwargs["transformer"] is None
     assert calls["transformer"]["sample_size"] == 2
     assert calls["loop"]["num_inference_steps"] == 1

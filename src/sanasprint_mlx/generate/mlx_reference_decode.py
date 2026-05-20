@@ -10,6 +10,7 @@ from sanasprint_mlx.pipeline.denoise import run_denoising_loop
 from sanasprint_mlx.scheduler.scm import SCMScheduler
 from sanasprint_mlx.text.cache import read_prompt_cache
 from sanasprint_mlx.transformer.real_model import RealSanaTransformerDenoiser
+from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
 
 
 DEFAULT_COMPLEX_HUMAN_INSTRUCTION = [
@@ -45,6 +46,7 @@ def run_mlx_reference_decode_generation(
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     pipe = SanaSprintPipeline.from_pretrained(
         str(snapshot_path),
+        transformer=None,
         torch_dtype=getattr(torch, torch_dtype),
         local_files_only=True,
     )
@@ -61,7 +63,7 @@ def run_mlx_reference_decode_generation(
         prompt_cache=prompt_cache,
         device=device,
     )
-    latent_channels = int(pipe.transformer.config.in_channels)
+    latent_channels = _latent_channels(pipe, snapshot_path)
     vae_scale_factor = int(getattr(pipe, "vae_scale_factor", 32))
     generator = torch.Generator(device="cpu").manual_seed(seed)
     latents = pipe.prepare_latents(
@@ -147,3 +149,10 @@ def _require_local_snapshot(snapshot: str | Path | None) -> Path:
     if not path.exists():
         raise FileNotFoundError(path)
     return path
+
+
+def _latent_channels(pipe, snapshot_path: Path) -> int:
+    transformer = getattr(pipe, "transformer", None)
+    if transformer is not None:
+        return int(transformer.config.in_channels)
+    return summarize_transformer_config(load_transformer_config(snapshot_path)).in_channels
