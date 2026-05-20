@@ -174,3 +174,32 @@ def test_verify_cli_block_stack_writes_report(tmp_path):
     assert report["status"] == "PASS"
     assert report["block_count"] == 2
     assert report["loaded_keys"]["count"] == 46
+
+
+def test_verify_cli_real_block_denoise_writes_report(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot", num_layers=2)
+    output = tmp_path / "real-block-denoise.json"
+
+    code = main(
+        [
+            "real-block-denoise",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--dtype",
+            "float16",
+            "--block-count",
+            "2",
+            "--sample-size",
+            "2",
+            "--prompt-sequence-length",
+            "4",
+        ]
+    )
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["status"] == "PASS"
+    assert report["block_count"] == 2
+    assert report["loaded_keys"]["total_count"] == 55

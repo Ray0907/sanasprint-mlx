@@ -8,6 +8,7 @@ from sanasprint_mlx.verification.gates import build_verification_report, load_pa
 from sanasprint_mlx.verification.block_attention import run_block0_attention_smoke
 from sanasprint_mlx.verification.block_stack import run_block_stack_smoke
 from sanasprint_mlx.verification.hygiene import check_repository_hygiene
+from sanasprint_mlx.verification.real_block_denoise import run_real_block_denoise_smoke
 from sanasprint_mlx.verification.report import write_verification_report
 from sanasprint_mlx.verification.scaffold_denoise import run_scaffold_denoise_smoke
 
@@ -39,6 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
     block_stack.add_argument("--seed", type=int, default=0)
     block_stack.add_argument("--sequence-length", type=int, default=4)
     block_stack.add_argument("--block-count", type=int, default=2)
+
+    real_block_denoise = subparsers.add_parser(
+        "real-block-denoise",
+        help="run a local MLX denoise smoke through scaffold weights and real Sana blocks",
+    )
+    real_block_denoise.add_argument("--snapshot", required=True)
+    real_block_denoise.add_argument("--output", required=True, type=Path)
+    real_block_denoise.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
+    real_block_denoise.add_argument("--seed", type=int, default=0)
+    real_block_denoise.add_argument("--sample-size", type=int, default=2)
+    real_block_denoise.add_argument("--prompt-sequence-length", type=int, default=4)
+    real_block_denoise.add_argument("--block-count", type=int, default=2)
 
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot")
@@ -95,6 +108,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             write_verification_report(report, args.output)
             print(f"wrote block stack report: {args.output}")
+            return 0 if report["status"] == "PASS" else 2
+        if args.command == "real-block-denoise":
+            if _looks_remote(args.snapshot):
+                raise ValueError("--snapshot must be a local path, not a remote URL")
+            report = run_real_block_denoise_smoke(
+                args.snapshot,
+                dtype=args.dtype,
+                seed=args.seed,
+                sample_size=args.sample_size,
+                prompt_sequence_length=args.prompt_sequence_length,
+                block_count=args.block_count,
+            )
+            write_verification_report(report, args.output)
+            print(f"wrote real block denoise report: {args.output}")
             return 0 if report["status"] == "PASS" else 2
 
         if args.output is None:
