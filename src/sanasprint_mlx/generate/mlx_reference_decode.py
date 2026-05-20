@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import resource
+import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +44,7 @@ def run_mlx_reference_decode_generation(
     mlx_dtype: str = "bfloat16",
 ) -> dict:
     del allow_download
+    start = time.perf_counter()
     snapshot_path = _require_local_snapshot(snapshot)
     output_path = Path(output)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -96,6 +100,7 @@ def run_mlx_reference_decode_generation(
         image = pipe.image_processor.postprocess(decoded, output_type="pil")[0]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
+    elapsed = time.perf_counter() - start
     return {
         "mode": "mlx_transformer_reference_decode",
         "output": str(output_path),
@@ -111,6 +116,8 @@ def run_mlx_reference_decode_generation(
         "prompt_source": prompt_source,
         "latents_shape": [int(dim) for dim in np.array(result.latents).shape],
         "loaded_keys": transformer.weight_report["loaded_keys"],
+        "runtime": {"wall_time_seconds": elapsed},
+        "memory": {"max_rss_bytes": _max_rss_bytes()},
     }
 
 
@@ -156,3 +163,10 @@ def _latent_channels(pipe, snapshot_path: Path) -> int:
     if transformer is not None:
         return int(transformer.config.in_channels)
     return summarize_transformer_config(load_transformer_config(snapshot_path)).in_channels
+
+
+def _max_rss_bytes() -> int:
+    value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return value
+    return value * 1024

@@ -107,6 +107,8 @@ def test_mlx_reference_decode_runs_mlx_loop_and_writes_png(tmp_path, monkeypatch
     assert output.read_bytes() == b"png"
     assert report["mode"] == "mlx_transformer_reference_decode"
     assert report["loaded_keys"]["total_count"] == 7
+    assert report["runtime"]["wall_time_seconds"] >= 0.0
+    assert report["memory"]["max_rss_bytes"] >= 0
     assert FakePipeline.last_from_pretrained_kwargs["transformer"] is None
     assert calls["transformer"]["sample_size"] == 2
     assert calls["loop"]["num_inference_steps"] == 1
