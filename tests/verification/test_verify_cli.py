@@ -239,3 +239,34 @@ def test_verify_cli_real_block_denoise_accepts_prompt_cache(tmp_path):
     report = json.loads(output.read_text())
     assert report["prompt_source"] == "prompt_cache"
     assert report["prompt_cache"]["path"] == str(cache)
+
+
+def test_verify_cli_real_transformer_loop_writes_report(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot", num_layers=2)
+    output = tmp_path / "real-transformer-loop.json"
+
+    code = main(
+        [
+            "real-transformer-loop",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--dtype",
+            "float16",
+            "--block-count",
+            "2",
+            "--sample-size",
+            "2",
+            "--prompt-sequence-length",
+            "4",
+            "--steps",
+            "1",
+        ]
+    )
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["status"] == "PASS"
+    assert report["scope"] == "real_transformer_loop_smoke_not_full_image_generation"
+    assert report["loaded_keys"]["total_count"] == 66

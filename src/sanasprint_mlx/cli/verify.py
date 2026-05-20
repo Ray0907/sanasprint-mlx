@@ -9,6 +9,7 @@ from sanasprint_mlx.verification.block_attention import run_block0_attention_smo
 from sanasprint_mlx.verification.block_stack import run_block_stack_smoke
 from sanasprint_mlx.verification.hygiene import check_repository_hygiene
 from sanasprint_mlx.verification.real_block_denoise import run_real_block_denoise_smoke
+from sanasprint_mlx.verification.real_transformer_loop import run_real_transformer_loop_smoke
 from sanasprint_mlx.verification.report import write_verification_report
 from sanasprint_mlx.verification.scaffold_denoise import run_scaffold_denoise_smoke
 
@@ -53,6 +54,20 @@ def build_parser() -> argparse.ArgumentParser:
     real_block_denoise.add_argument("--sample-size", type=int, default=2)
     real_block_denoise.add_argument("--prompt-sequence-length", type=int, default=4)
     real_block_denoise.add_argument("--block-count", type=int, default=2)
+
+    real_transformer_loop = subparsers.add_parser(
+        "real-transformer-loop",
+        help="run the SCM scheduler loop with the local MLX real Sana transformer adapter",
+    )
+    real_transformer_loop.add_argument("--snapshot", required=True)
+    real_transformer_loop.add_argument("--output", required=True, type=Path)
+    real_transformer_loop.add_argument("--prompt-cache", type=Path)
+    real_transformer_loop.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
+    real_transformer_loop.add_argument("--seed", type=int, default=0)
+    real_transformer_loop.add_argument("--steps", type=int, default=1)
+    real_transformer_loop.add_argument("--sample-size", type=int, default=2)
+    real_transformer_loop.add_argument("--prompt-sequence-length", type=int, default=4)
+    real_transformer_loop.add_argument("--block-count", type=int, default=2)
 
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot")
@@ -124,6 +139,22 @@ def main(argv: list[str] | None = None) -> int:
             )
             write_verification_report(report, args.output)
             print(f"wrote real block denoise report: {args.output}")
+            return 0 if report["status"] == "PASS" else 2
+        if args.command == "real-transformer-loop":
+            if _looks_remote(args.snapshot):
+                raise ValueError("--snapshot must be a local path, not a remote URL")
+            report = run_real_transformer_loop_smoke(
+                args.snapshot,
+                dtype=args.dtype,
+                prompt_cache=args.prompt_cache,
+                seed=args.seed,
+                steps=args.steps,
+                sample_size=args.sample_size,
+                prompt_sequence_length=args.prompt_sequence_length,
+                block_count=args.block_count,
+            )
+            write_verification_report(report, args.output)
+            print(f"wrote real transformer loop report: {args.output}")
             return 0 if report["status"] == "PASS" else 2
 
         if args.output is None:

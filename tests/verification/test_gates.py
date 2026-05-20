@@ -130,6 +130,24 @@ def test_pass_evidence_can_mark_real_block_denoise_passed(tmp_path):
     assert gate(report, "real_block_denoise")["status"] == "PASS"
 
 
+def test_pass_evidence_can_mark_real_transformer_loop_passed(tmp_path):
+    evidence = {
+        "schema_version": 1,
+        "gates": {
+            "real_transformer_loop": {
+                "status": "PASS",
+                "command": "cmd",
+                "artifact": str(tmp_path),
+                "observed_at": "2026-05-20T00:00:00Z",
+            }
+        },
+    }
+
+    report = build_verification_report(env={}, pass_evidence=evidence)
+
+    assert gate(report, "real_transformer_loop")["status"] == "PASS"
+
+
 def test_invalid_pass_evidence_is_rejected(tmp_path):
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps({"schema_version": 1, "gates": {"feature_9_preconditions": {"status": "PASS"}}}))
@@ -185,6 +203,7 @@ def test_report_includes_real_verification_commands():
     assert "sanasprint-mlx-verify block0-attention" in gate(report, "block0_attention")["command"]
     assert "sanasprint-mlx-verify block-stack" in gate(report, "block_stack")["command"]
     assert "sanasprint-mlx-verify real-block-denoise" in gate(report, "real_block_denoise")["command"]
+    assert "sanasprint-mlx-verify real-transformer-loop" in gate(report, "real_transformer_loop")["command"]
     assert "sanasprint-mlx-verify scaffold-denoise" in gate(report, "scaffold_denoise")["command"]
     assert "sanasprint-mlx-generate" in gate(report, "smoke_512")["command"]
 
@@ -223,6 +242,18 @@ def test_real_block_denoise_gate_requires_local_snapshot(tmp_path):
 
     assert gate(ready, "real_block_denoise")["status"] == "READY"
     assert gate(remote, "real_block_denoise")["status"] == "BLOCKED"
+
+
+def test_real_transformer_loop_gate_requires_local_snapshot(tmp_path):
+    ready = build_verification_report(env={}, snapshot=tmp_path)
+    remote = build_verification_report(
+        env={},
+        snapshot="Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+        allow_download=True,
+    )
+
+    assert gate(ready, "real_transformer_loop")["status"] == "READY"
+    assert gate(remote, "real_transformer_loop")["status"] == "BLOCKED"
 
 
 def test_scaffold_denoise_gate_requires_local_snapshot(tmp_path):
