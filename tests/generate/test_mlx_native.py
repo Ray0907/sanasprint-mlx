@@ -1,0 +1,72 @@
+import numpy as np
+
+from sanasprint_mlx.generate.mlx_native import run_mlx_generation
+from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+from sanasprint_mlx.text.cache import write_prompt_cache
+
+
+class FakeTransformer:
+    def __init__(self):
+        self.config = type("Config", (), {"guidance_embeds_scale": 1000.0})()
+        self.weight_report = {"loaded_keys": {"total_count": 11}}
+
+
+class FakeDecoder:
+    def decode(self, latents):
+        batch = latents.shape[0]
+        return np.zeros((batch, 3, 2, 2), dtype=np.float32)
+
+
+class FakeLoopResult:
+    latents = np.zeros((1, 4, 2, 2), dtype=np.float32)
+
+
+def test_mlx_generation_uses_prompt_cache_transformer_and_mlx_decoder(tmp_path, monkeypatch):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    calls = {}
+
+    def fake_transformer_from_snapshot(*args, **kwargs):
+        calls["transformer"] = kwargs
+        return FakeTransformer()
+
+    def fake_decoder_from_snapshot(*args, **kwargs):
+        calls["decoder"] = kwargs
+        return FakeDecoder()
+
+    def fake_loop(**kwargs):
+        calls["loop"] = kwargs
+        return FakeLoopResult()
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", fake_transformer_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", fake_decoder_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", fake_loop)
+
+    output = tmp_path / "out.png"
+    report = run_mlx_generation(
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=7,
+        output=output,
+        snapshot=snapshot,
+    )
+
+    assert output.exists()
+    assert report["mode"] == "mlx_transformer_mlx_decode"
+    assert report["loaded_keys"]["total_count"] == 11
+    assert calls["transformer"]["sample_size"] == 1
+    assert calls["loop"]["num_inference_steps"] == 1
+    assert calls["decoder"]["dtype"] == "bfloat16"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sanasprint_mlx.generate.plan import GenerationRequest, build_phase_plan
 from sanasprint_mlx.generate.mlx_reference_decode import run_mlx_reference_decode_generation
+from sanasprint_mlx.generate.mlx_native import run_mlx_generation
 from sanasprint_mlx.generate.reference_bridge import (
     run_reference_pipeline_batch_generation,
     run_reference_pipeline_generation,
@@ -137,6 +138,24 @@ def main(argv: list[str] | None = None) -> int:
                 torch_dtype=args.torch_dtype,
             )
         except (ImportError, OSError, RuntimeError, ValueError) as error:
+            return _error(str(error))
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+
+    if args.prompt_cache is not None:
+        if args.count != 1:
+            return _error("native MLX generation currently supports --count 1 only")
+        try:
+            report = run_mlx_generation(
+                prompt_cache=args.prompt_cache,
+                height=args.height,
+                width=args.width,
+                steps=args.steps,
+                seed=args.seed,
+                output=args.output,
+                snapshot=args.snapshot,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
             return _error(str(error))
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0

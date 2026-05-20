@@ -250,6 +250,32 @@ def test_generate_cli_non_dry_run_requires_reference_pipeline(tmp_path):
     assert code == 2
 
 
+def test_generate_cli_prompt_cache_without_reference_uses_native_mlx_path(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        kwargs["output"].write_bytes(b"png")
+        return {"output": str(kwargs["output"]), "mode": "mlx_transformer_mlx_decode"}
+
+    monkeypatch.setattr(generate_cli, "run_mlx_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt-cache",
+            str(tmp_path / "prompt-cache"),
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["prompt_cache"] == tmp_path / "prompt-cache"
+    assert calls[0]["output"] == tmp_path / "out.png"
+
+
 def test_generate_cli_reference_decode_uses_mlx_transformer_path(tmp_path, monkeypatch):
     calls = []
 
