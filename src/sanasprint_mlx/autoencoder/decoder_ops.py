@@ -41,6 +41,38 @@ def dc_up_block_interpolate(x, *, conv_weight, conv_bias):
     return hidden + shortcut
 
 
+def glumb_conv(
+    x,
+    *,
+    conv_inverted_weight,
+    conv_inverted_bias,
+    conv_depth_weight,
+    conv_depth_bias,
+    conv_point_weight,
+    norm_weight,
+    norm_bias,
+    residual_connection: bool = True,
+):
+    residual = mx.array(x)
+    hidden = conv2d_nchw(residual, conv_inverted_weight, conv_inverted_bias)
+    hidden = silu(hidden)
+    hidden = conv2d_nchw(
+        hidden,
+        conv_depth_weight,
+        conv_depth_bias,
+        padding=1,
+        groups=mx.array(conv_depth_weight).shape[0],
+    )
+    split = hidden.shape[1] // 2
+    hidden, gate = hidden[:, :split], hidden[:, split:]
+    hidden = hidden * silu(gate)
+    hidden = conv2d_nchw(hidden, conv_point_weight)
+    hidden = rms_norm_nchw(hidden, norm_weight, norm_bias, eps=1e-5)
+    if residual_connection:
+        hidden = hidden + residual
+    return hidden
+
+
 def nearest_upsample_2x(x):
     x = mx.array(x)
     x = mx.repeat(x, 2, axis=2)

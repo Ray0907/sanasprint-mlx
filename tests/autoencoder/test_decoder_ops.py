@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from sanasprint_mlx.autoencoder.decoder_ops import conv2d_nchw, dc_up_block_interpolate, res_block, rms_norm_nchw
+from sanasprint_mlx.autoencoder.decoder_ops import conv2d_nchw, dc_up_block_interpolate, glumb_conv, res_block, rms_norm_nchw
 
 
 def test_conv2d_nchw_matches_torch_conv2d():
@@ -77,5 +77,47 @@ def test_dc_up_block_interpolate_matches_diffusers_shortcut_path():
     shortcut = torch.repeat_interleave(torch.from_numpy(x), repeats=4 * 4 // 2, dim=1)
     shortcut = F.pixel_shuffle(shortcut, 2)
     expected = (hidden + shortcut).numpy()
+
+    np.testing.assert_allclose(actual, expected, atol=1e-5)
+
+
+def test_glumb_conv_matches_diffusers_math():
+    rng = np.random.default_rng(13)
+    x = rng.standard_normal((1, 2, 3, 3), dtype=np.float32)
+    conv_inverted_weight = rng.standard_normal((16, 2, 1, 1), dtype=np.float32) * 0.05
+    conv_inverted_bias = rng.standard_normal((16,), dtype=np.float32) * 0.05
+    conv_depth_weight = rng.standard_normal((16, 1, 3, 3), dtype=np.float32) * 0.05
+    conv_depth_bias = rng.standard_normal((16,), dtype=np.float32) * 0.05
+    conv_point_weight = rng.standard_normal((2, 8, 1, 1), dtype=np.float32) * 0.05
+    norm_weight = rng.standard_normal((2,), dtype=np.float32) * 0.05 + 1.0
+    norm_bias = rng.standard_normal((2,), dtype=np.float32) * 0.05
+
+    actual = np.array(
+        glumb_conv(
+            x,
+            conv_inverted_weight=conv_inverted_weight,
+            conv_inverted_bias=conv_inverted_bias,
+            conv_depth_weight=conv_depth_weight,
+            conv_depth_bias=conv_depth_bias,
+            conv_point_weight=conv_point_weight,
+            norm_weight=norm_weight,
+            norm_bias=norm_bias,
+        )
+    )
+    hidden = F.conv2d(torch.from_numpy(x), torch.from_numpy(conv_inverted_weight), torch.from_numpy(conv_inverted_bias))
+    hidden = F.silu(hidden)
+    hidden = F.conv2d(
+        hidden,
+        torch.from_numpy(conv_depth_weight),
+        torch.from_numpy(conv_depth_bias),
+        padding=1,
+        groups=16,
+    )
+    hidden, gate = torch.chunk(hidden, 2, dim=1)
+    hidden = hidden * F.silu(gate)
+    hidden = F.conv2d(hidden, torch.from_numpy(conv_point_weight), bias=None)
+    hidden = F.rms_norm(hidden.movedim(1, -1), (2,), weight=torch.from_numpy(norm_weight), eps=1e-5)
+    hidden = (hidden + torch.from_numpy(norm_bias)).movedim(-1, 1)
+    expected = (hidden + torch.from_numpy(x)).numpy()
 
     np.testing.assert_allclose(actual, expected, atol=1e-5)
