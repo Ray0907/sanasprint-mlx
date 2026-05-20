@@ -268,14 +268,27 @@ def test_scaffold_denoise_gate_requires_local_snapshot(tmp_path):
     assert gate(remote, "scaffold_denoise")["status"] == "BLOCKED"
 
 
-def test_smoke_command_uses_reference_pipeline_and_allow_download_when_enabled():
+def test_smoke_command_uses_native_mlx_generation_for_local_snapshot(tmp_path):
+    report = build_verification_report(
+        env={},
+        snapshot=tmp_path,
+    )
+
+    command = gate(report, "smoke_512")["command"]
+    assert gate(report, "smoke_512")["status"] == "READY"
+    assert "--reference-pipeline" not in command
+    assert "--reference-decode" not in command
+    assert "--prompt " in command
+    assert f"--snapshot {tmp_path}" in command
+
+
+def test_smoke_gate_blocks_remote_snapshot_even_when_download_allowed():
     report = build_verification_report(
         env={},
         snapshot="Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
         allow_download=True,
     )
 
-    command = gate(report, "smoke_512")["command"]
-    assert "--reference-pipeline" in command
-    assert "--allow-download" in command
-    assert "--reference-decode" not in command
+    assert gate(report, "smoke_512")["status"] == "BLOCKED"
+    assert "local snapshot" in gate(report, "smoke_512")["reason"]
+    assert "--reference-pipeline" not in gate(report, "smoke_512")["command"]

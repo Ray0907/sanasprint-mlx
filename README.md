@@ -132,7 +132,7 @@ The transformer package currently provides a Diffusers-style forward contract, d
 
 ## Scheduler Loop
 
-The scheduler package includes an MLX `SCMScheduler` scaffold and a cached-embedding denoising loop that mirrors the SanaSprint latent scaling and timestep math used by Diffusers. Default tests use tiny deterministic tensors and fake transformers only. Real loop parity requires `SANASPRINT_MLX_REAL_LOOP_FIXTURE` and remains blocked until real transformer parity is available.
+The scheduler package includes an MLX `SCMScheduler` and a denoising loop that mirrors the SanaSprint latent scaling and timestep math used by Diffusers. Default tests use tiny deterministic tensors and fake transformers; real generation smoke tests exercise the same loop with the loaded MLX transformer.
 
 ## Generate CLI
 
@@ -231,4 +231,4 @@ PYTHONPATH=src python3 -m sanasprint_mlx.cli.verify \
   --snapshot Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers
 ```
 
-The report lists transformer, loop, text, decode, 512px smoke, 768px smoke, and Feature 9 readiness gates. Feature 9 quantization remains blocked until those gates have strict pass evidence.
+The report lists transformer, loop, text, decode, native 512px smoke, native 768px smoke, and Feature 9 readiness gates. Feature 9 quantization remains blocked until those gates have strict pass evidence.

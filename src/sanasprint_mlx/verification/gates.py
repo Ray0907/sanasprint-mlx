@@ -132,24 +132,42 @@ def _snapshot_gate(snapshot, allow_download: bool) -> dict:
 
 
 def _smoke_gate(size: int, snapshot, allow_download: bool, evidence: dict) -> dict:
+    del allow_download
     gate_id = f"smoke_{size}"
-    allow_download_arg = " --allow-download" if allow_download else ""
     command = (
         "sanasprint-mlx-generate "
         f"--prompt 'a tiny astronaut hatching from an egg on the moon' --height {size} --width {size} "
         "--steps 2 --seed 7 "
         f"--snapshot {snapshot or '/path/to/Sana_Sprint_0.6B_1024px_diffusers'} "
-        f"--output /tmp/sanasprint-mlx-{size}.png --low-memory --reference-pipeline{allow_download_arg}"
+        f"--output /tmp/sanasprint-mlx-{size}.png --low-memory"
     )
     if gate_id in evidence["gates"]:
         item = dict(evidence["gates"][gate_id])
         return {"id": gate_id, "status": "PASS", "reason": "external pass evidence", "command": command, **item}
-    snapshot_gate = _snapshot_gate(snapshot, allow_download)
+    snapshot_gate = _local_snapshot_gate(snapshot, "native MLX smoke")
     return {
         "id": gate_id,
         "status": "READY" if snapshot_gate["status"] == "READY" else "BLOCKED",
-        "reason": "snapshot ready" if snapshot_gate["status"] == "READY" else "snapshot blocked",
+        "reason": "local snapshot exists" if snapshot_gate["status"] == "READY" else snapshot_gate["reason"],
         "command": command,
+    }
+
+
+def _local_snapshot_gate(snapshot, gate_label: str) -> dict:
+    if snapshot is None:
+        return {
+            "status": "BLOCKED",
+            "reason": "missing local snapshot path",
+        }
+    if _looks_remote(snapshot):
+        return {
+            "status": "BLOCKED",
+            "reason": f"{gate_label} requires a local snapshot path",
+        }
+    exists = Path(snapshot).exists()
+    return {
+        "status": "READY" if exists else "BLOCKED",
+        "reason": "local snapshot exists" if exists else "local snapshot path does not exist",
     }
 
 
