@@ -2,8 +2,16 @@ import mlx.core as mx
 import numpy as np
 import torch
 import torch.nn.functional as F
+from diffusers.models.attention_processor import SanaMultiscaleLinearAttention
 
-from sanasprint_mlx.autoencoder.decoder_ops import conv2d_nchw, dc_up_block_interpolate, glumb_conv, res_block, rms_norm_nchw
+from sanasprint_mlx.autoencoder.decoder_ops import (
+    conv2d_nchw,
+    dc_up_block_interpolate,
+    glumb_conv,
+    res_block,
+    rms_norm_nchw,
+    sana_multiscale_linear_attention,
+)
 
 
 def test_conv2d_nchw_matches_torch_conv2d():
@@ -119,5 +127,49 @@ def test_glumb_conv_matches_diffusers_math():
     hidden = F.rms_norm(hidden.movedim(1, -1), (2,), weight=torch.from_numpy(norm_weight), eps=1e-5)
     hidden = (hidden + torch.from_numpy(norm_bias)).movedim(-1, 1)
     expected = (hidden + torch.from_numpy(x)).numpy()
+
+    np.testing.assert_allclose(actual, expected, atol=1e-5)
+
+
+def test_sana_multiscale_linear_attention_matches_diffusers_module():
+    rng = np.random.default_rng(17)
+    x = rng.standard_normal((1, 4, 2, 2), dtype=np.float32)
+    attn = SanaMultiscaleLinearAttention(
+        in_channels=4,
+        out_channels=4,
+        attention_head_dim=2,
+        kernel_sizes=(3,),
+        norm_type="rms_norm",
+        residual_connection=True,
+    )
+    state = attn.state_dict()
+    for index, key in enumerate(sorted(state)):
+        values = rng.standard_normal(tuple(state[key].shape), dtype=np.float32) * 0.05
+        if key == "norm_out.weight":
+            values = values + 1.0
+        state[key].copy_(torch.from_numpy(values))
+
+    actual = np.array(
+        sana_multiscale_linear_attention(
+            x,
+            to_q_weight=state["to_q.weight"].numpy(),
+            to_k_weight=state["to_k.weight"].numpy(),
+            to_v_weight=state["to_v.weight"].numpy(),
+            multiscale_weights=[
+                {
+                    "proj_in_weight": state["to_qkv_multiscale.0.proj_in.weight"].numpy(),
+                    "proj_out_weight": state["to_qkv_multiscale.0.proj_out.weight"].numpy(),
+                }
+            ],
+            to_out_weight=state["to_out.weight"].numpy(),
+            norm_weight=state["norm_out.weight"].numpy(),
+            norm_bias=state["norm_out.bias"].numpy(),
+            attention_head_dim=2,
+            norm_type="rms_norm",
+            residual_connection=True,
+        )
+    )
+    with torch.no_grad():
+        expected = attn(torch.from_numpy(x)).numpy()
 
     np.testing.assert_allclose(actual, expected, atol=1e-5)
