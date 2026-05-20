@@ -250,6 +250,63 @@ def test_generate_cli_non_dry_run_requires_reference_pipeline(tmp_path):
     assert code == 2
 
 
+def test_generate_cli_reference_decode_uses_mlx_transformer_path(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        kwargs["output"].write_bytes(b"png")
+        return {"output": str(kwargs["output"]), "mode": "mlx_transformer_reference_decode"}
+
+    monkeypatch.setattr(generate_cli, "run_mlx_reference_decode_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "real",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+            "--reference-decode",
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["prompt"] == "real"
+    assert calls[0]["torch_dtype"] == "bfloat16"
+    assert calls[0]["output"] == tmp_path / "out.png"
+
+
+def test_generate_cli_reference_decode_rejects_batch_until_supported(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {"output": str(kwargs["output"])}
+
+    monkeypatch.setattr(generate_cli, "run_mlx_reference_decode_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "real",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--output-dir",
+            str(tmp_path / "batch"),
+            "--count",
+            "2",
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+            "--reference-decode",
+        ]
+    )
+
+    assert code == 2
+    assert calls == []
+
+
 def test_generate_cli_non_dry_run_without_reference_pipeline_does_not_call_reference(tmp_path, monkeypatch):
     calls = []
 

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from sanasprint_mlx.generate.plan import GenerationRequest, build_phase_plan
+from sanasprint_mlx.generate.mlx_reference_decode import run_mlx_reference_decode_generation
 from sanasprint_mlx.generate.reference_bridge import (
     run_reference_pipeline_batch_generation,
     run_reference_pipeline_generation,
@@ -118,7 +119,29 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
 
-    return _error("real image generation requires --reference-pipeline or use --dry-run")
+    if args.reference_decode:
+        if args.count != 1:
+            return _error("--reference-decode currently supports --count 1 only")
+        try:
+            report = run_mlx_reference_decode_generation(
+                prompt=args.prompt,
+                height=args.height,
+                width=args.width,
+                steps=args.steps,
+                seed=args.seed,
+                output=args.output,
+                snapshot=args.snapshot,
+                allow_download=args.allow_download,
+                prompt_cache=args.prompt_cache,
+                low_memory=args.low_memory,
+                torch_dtype=args.torch_dtype,
+            )
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            return _error(str(error))
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+
+    return _error("real image generation requires --reference-pipeline, --reference-decode, or use --dry-run")
 
 
 def _error(message: str) -> int:
