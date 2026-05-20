@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from sanasprint_mlx.generate.mlx_reference_decode import run_mlx_reference_decode_generation
+from sanasprint_mlx.text.cache import write_prompt_cache
 
 
 class FakeTensor:
@@ -112,3 +113,40 @@ def test_mlx_reference_decode_runs_mlx_loop_and_writes_png(tmp_path, monkeypatch
     assert FakePipeline.last_from_pretrained_kwargs["transformer"] is None
     assert calls["transformer"]["sample_size"] == 2
     assert calls["loop"]["num_inference_steps"] == 1
+
+
+def test_mlx_reference_decode_prompt_cache_skips_reference_text_components(tmp_path, monkeypatch):
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_reference_decode.SanaSprintPipeline", FakePipeline)
+    monkeypatch.setattr(
+        "sanasprint_mlx.generate.mlx_reference_decode.RealSanaTransformerDenoiser.from_snapshot",
+        lambda *args, **kwargs: FakeTransformer(),
+    )
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_reference_decode.run_denoising_loop", lambda **kwargs: FakeResult())
+
+    run_mlx_reference_decode_generation(
+        prompt=None,
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=7,
+        output=tmp_path / "out.png",
+        snapshot=tmp_path,
+        allow_download=False,
+    )
+
+    assert FakePipeline.last_from_pretrained_kwargs["transformer"] is None
+    assert FakePipeline.last_from_pretrained_kwargs["text_encoder"] is None
+    assert FakePipeline.last_from_pretrained_kwargs["tokenizer"] is None

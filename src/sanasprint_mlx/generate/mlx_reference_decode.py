@@ -48,12 +48,14 @@ def run_mlx_reference_decode_generation(
     snapshot_path = _require_local_snapshot(snapshot)
     output_path = Path(output)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    pipe = SanaSprintPipeline.from_pretrained(
-        str(snapshot_path),
-        transformer=None,
-        torch_dtype=getattr(torch, torch_dtype),
-        local_files_only=True,
-    )
+    load_kwargs = {
+        "transformer": None,
+        "torch_dtype": getattr(torch, torch_dtype),
+        "local_files_only": True,
+    }
+    if prompt_cache is not None:
+        load_kwargs.update({"text_encoder": None, "tokenizer": None})
+    pipe = SanaSprintPipeline.from_pretrained(str(snapshot_path), **load_kwargs)
     if low_memory and hasattr(pipe, "enable_model_cpu_offload"):
         pipe.enable_model_cpu_offload()
     elif low_memory and hasattr(pipe, "enable_sequential_cpu_offload"):
