@@ -155,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                     output=args.output,
                     snapshot=args.snapshot,
                     tiled_decode=args.tiled_decode,
+                    allow_download=args.allow_download,
                 )
             else:
                 args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -169,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                     outputs=outputs,
                     snapshot=args.snapshot,
                     tiled_decode=args.tiled_decode,
+                    allow_download=args.allow_download,
                 )
                 report = _native_batch_report(reports)
         except (ImportError, OSError, RuntimeError, ValueError) as error:

@@ -125,6 +125,21 @@ Export a local Diffusers snapshot into a native MLX-loadable snapshot:
 
 The exporter writes `mlx_model.json`, preserves the tokenizer and component configs, and rewrites component safetensors shard-by-shard with MLX so it does not need to hold every component in memory at once. The exported directory can be passed back to `sanasprint_mlx.cli.generate` as `--snapshot`.
 
+Once uploaded to Hugging Face, the native CLI can resolve the exported model with `--allow-download`:
+
+```bash
+.venv/bin/python -m sanasprint_mlx.cli.generate \
+  --prompt "a tiny astronaut hatching from an egg on the moon" \
+  --height 768 \
+  --width 768 \
+  --steps 2 \
+  --seed 42 \
+  --snapshot RayyTien/SanaSprint-0.6B-1024px-MLX \
+  --allow-download \
+  --output /tmp/sanasprint-mlx.png \
+  --tiled-decode
+```
+
 Latest local export smoke on Apple M4 with 16GB unified memory:
 
 - Export output: `/tmp/sanasprint-mlx-exported-bf16`

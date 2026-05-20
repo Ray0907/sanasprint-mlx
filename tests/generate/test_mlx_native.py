@@ -120,6 +120,51 @@ def test_mlx_generation_uses_native_prompt_encoder_without_cache(tmp_path, monke
     np.testing.assert_array_equal(calls["loop"]["prompt_attention_mask"], np.ones((1, 2), dtype=np.int32))
 
 
+def test_mlx_generation_downloads_remote_snapshot_when_allowed(tmp_path, monkeypatch):
+    local_snapshot = make_synthetic_snapshot(tmp_path / "downloaded")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    calls = {}
+
+    def fake_snapshot_download(repo_id):
+        calls["repo_id"] = repo_id
+        return str(local_snapshot)
+
+    def fake_transformer_from_snapshot(snapshot, *args, **kwargs):
+        calls["snapshot"] = snapshot
+        return FakeTransformer()
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.snapshot_download", fake_snapshot_download, raising=False)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", fake_transformer_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", lambda *args, **kwargs: FakeDecoder())
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", lambda **kwargs: FakeLoopResult())
+
+    report = run_mlx_generation(
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=7,
+        output=tmp_path / "out.png",
+        snapshot="RayyTien/SanaSprint-0.6B-1024px-MLX",
+        allow_download=True,
+    )
+
+    assert calls["repo_id"] == "RayyTien/SanaSprint-0.6B-1024px-MLX"
+    assert calls["snapshot"] == local_snapshot
+    assert report["model"] == str(local_snapshot)
+
+
 def test_mlx_generation_releases_transformer_before_loading_decoder(tmp_path, monkeypatch):
     snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
     cache = tmp_path / "prompt-cache"

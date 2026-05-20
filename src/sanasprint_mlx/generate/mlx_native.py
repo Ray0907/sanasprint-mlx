@@ -35,6 +35,7 @@ def run_mlx_generation(
     snapshot: str | Path | None,
     mlx_dtype: str = "bfloat16",
     tiled_decode: bool = False,
+    allow_download: bool = False,
 ) -> dict:
     return run_mlx_batch_generation(
         prompt=prompt,
@@ -47,6 +48,7 @@ def run_mlx_generation(
         snapshot=snapshot,
         mlx_dtype=mlx_dtype,
         tiled_decode=tiled_decode,
+        allow_download=allow_download,
     )[0]
 
 
@@ -62,6 +64,7 @@ def run_mlx_batch_generation(
     snapshot: str | Path | None,
     mlx_dtype: str = "bfloat16",
     tiled_decode: bool = False,
+    allow_download: bool = False,
 ) -> list[dict]:
     if not outputs:
         raise ValueError("batch generation requires at least one output")
@@ -77,6 +80,7 @@ def run_mlx_batch_generation(
             snapshot=snapshot,
             mlx_dtype=mlx_dtype,
             tiled_decode=tiled_decode,
+            allow_download=allow_download,
         )
 
 
@@ -92,9 +96,10 @@ def _run_mlx_batch_generation_uncached(
     snapshot: str | Path | None,
     mlx_dtype: str,
     tiled_decode: bool,
+    allow_download: bool,
 ) -> list[dict]:
     start = time.perf_counter()
-    snapshot_path = _require_local_snapshot(snapshot)
+    snapshot_path = _resolve_snapshot(snapshot, allow_download=allow_download)
     prompt_embeds, prompt_attention_mask, prompt_source = _prompt_inputs(
         prompt=prompt,
         prompt_cache=prompt_cache,
@@ -230,18 +235,32 @@ def _scaling_factor(snapshot_path: Path) -> float:
     return float(json.loads(config_path.read_text()).get("scaling_factor", 1.0))
 
 
-def _require_local_snapshot(snapshot: str | Path | None) -> Path:
+def _resolve_snapshot(snapshot: str | Path | None, *, allow_download: bool = False) -> Path:
     if snapshot is None:
         raise ValueError("MLX generation requires a local snapshot path")
     text = str(snapshot)
-    if text.startswith(("http://", "https://", "hf://")) or (
-        "/" in text and not text.startswith(("/", "./", "../")) and not Path(text).exists()
-    ):
+    if _looks_remote_snapshot(text):
+        if allow_download:
+            return Path(snapshot_download(text.removeprefix("hf://")))
         raise ValueError("MLX generation requires a local snapshot path")
     path = Path(snapshot)
     if not path.exists():
         raise FileNotFoundError(path)
     return path
+
+
+def _looks_remote_snapshot(text: str) -> bool:
+    return text.startswith(("http://", "https://", "hf://")) or (
+        "/" in text and not text.startswith(("/", "./", "../")) and not Path(text).exists()
+    )
+
+
+def snapshot_download(repo_id: str) -> str:
+    try:
+        from huggingface_hub import snapshot_download as download
+    except ImportError as error:
+        raise ImportError("native MLX remote snapshots require huggingface_hub") from error
+    return download(repo_id)
 
 
 def _release_mlx_memory() -> None:

@@ -231,6 +231,42 @@ def test_generate_cli_native_batch_uses_output_dir_and_count(tmp_path, monkeypat
     assert [item["seed"] for item in report["outputs"]] == [30, 31]
 
 
+def test_generate_cli_native_generation_forwards_allow_download(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        kwargs["output"].write_bytes(b"png")
+        return {
+            "output": str(kwargs["output"]),
+            "model": str(kwargs["snapshot"]),
+            "height": kwargs["height"],
+            "width": kwargs["width"],
+            "steps": kwargs["steps"],
+            "seed": kwargs["seed"],
+            "mode": "mlx_transformer_mlx_decode",
+            "decode_mode": "mlx_decode",
+            "prompt_source": "mlx_text_encoder",
+        }
+
+    monkeypatch.setattr(generate_cli, "run_mlx_generation", fake_run)
+
+    code = main(
+        [
+            "--prompt",
+            "remote",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--snapshot",
+            "RayyTien/SanaSprint-0.6B-1024px-MLX",
+            "--allow-download",
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["allow_download"] is True
+
+
 def test_generate_cli_reference_pipeline_batch_requires_output_dir_before_generation(tmp_path, monkeypatch):
     calls = []
 
