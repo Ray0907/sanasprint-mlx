@@ -182,6 +182,21 @@ For larger outputs, route VAE decode through the tiled MLX wrapper:
   --tiled-decode
 ```
 
+For warm native batches, reuse the loaded MLX text encoder, transformer, and decoder across multiple seeds:
+
+```bash
+.venv/bin/python -m sanasprint_mlx.cli.generate \
+  --prompt "a cinematic macro photograph of a translucent glass apple on a wet black stone table, sharp reflections, studio rim light, ultra detailed" \
+  --height 512 \
+  --width 512 \
+  --steps 2 \
+  --seed 42 \
+  --snapshot /path/to/Sana_Sprint_0.6B_1024px_diffusers \
+  --output sample.png \
+  --output-dir /tmp/sanasprint-mlx-native-batch \
+  --count 2
+```
+
 Latest local raw-prompt MLX smoke result on Apple M4 with 16GB unified memory:
 
 - Mode: `mlx_transformer_mlx_decode`
@@ -202,6 +217,17 @@ Latest local tiled MLX decode smoke result on the same machine:
 - Peak memory: `4.50 GiB` maximum resident set size (`4,830,068,736` bytes)
 - Peak footprint: `10.58 GiB` (`11,357,767,264` bytes)
 - Output quality check: sharp translucent glass apple on a wet black surface, visible reflections, and no obvious tile-boundary artifacts.
+
+Latest local warm native batch smoke result on the same machine:
+
+- Mode: `mlx_transformer_mlx_decode`
+- Count: `2`
+- Seeds: `42`, `43`
+- Image: `512x512`, 2 inference steps
+- Wall time: `10.70s` from `/usr/bin/time -l`
+- Peak memory: `5.02 GiB` maximum resident set size (`5,388,550,144` bytes)
+- Peak footprint: `10.55 GiB` (`11,330,832,184` bytes)
+- Output quality check: both images are sharp translucent glass apples on wet black surfaces, with distinct seed variation and no blank/corrupt output.
 
 Run the real Diffusers reference pipeline path:
 

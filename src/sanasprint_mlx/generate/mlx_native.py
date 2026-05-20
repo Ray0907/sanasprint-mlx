@@ -35,9 +35,37 @@ def run_mlx_generation(
     mlx_dtype: str = "bfloat16",
     tiled_decode: bool = False,
 ) -> dict:
+    return run_mlx_batch_generation(
+        prompt=prompt,
+        prompt_cache=prompt_cache,
+        height=height,
+        width=width,
+        steps=steps,
+        seed=seed,
+        outputs=[output],
+        snapshot=snapshot,
+        mlx_dtype=mlx_dtype,
+        tiled_decode=tiled_decode,
+    )[0]
+
+
+def run_mlx_batch_generation(
+    *,
+    prompt: str | None = None,
+    prompt_cache: str | Path | None = None,
+    height: int,
+    width: int,
+    steps: int,
+    seed: int,
+    outputs: list[str | Path],
+    snapshot: str | Path | None,
+    mlx_dtype: str = "bfloat16",
+    tiled_decode: bool = False,
+) -> list[dict]:
+    if not outputs:
+        raise ValueError("batch generation requires at least one output")
     start = time.perf_counter()
     snapshot_path = _require_local_snapshot(snapshot)
-    output_path = Path(output)
     prompt_embeds, prompt_attention_mask, prompt_source = _prompt_inputs(
         prompt=prompt,
         prompt_cache=prompt_cache,
@@ -45,56 +73,65 @@ def run_mlx_generation(
     )
     summary = summarize_transformer_config(load_transformer_config(snapshot_path))
     sample_size = max(height // 32, 1)
-    latents = _latents(
-        channels=summary.in_channels,
-        height=sample_size,
-        width=max(width // 32, 1),
-        seed=seed,
-    )
     transformer = RealSanaTransformerDenoiser.from_snapshot(
         snapshot_path,
         sample_size=sample_size,
         block_count=None,
         dtype=mlx_dtype,
     )
-    result = run_denoising_loop(
-        transformer=transformer,
-        scheduler=SCMScheduler(),
-        latents=latents,
-        prompt_embeds=prompt_embeds,
-        prompt_attention_mask=prompt_attention_mask,
-        num_inference_steps=steps,
-    )
-    denoised_latents = np.array(result.latents, dtype=np.float32)
-    latents_shape = [int(dim) for dim in denoised_latents.shape]
+    denoised_items = []
+    for index, output in enumerate(outputs):
+        item_seed = seed + index
+        latents = _latents(
+            channels=summary.in_channels,
+            height=sample_size,
+            width=max(width // 32, 1),
+            seed=item_seed,
+        )
+        result = run_denoising_loop(
+            transformer=transformer,
+            scheduler=SCMScheduler(),
+            latents=latents,
+            prompt_embeds=prompt_embeds,
+            prompt_attention_mask=prompt_attention_mask,
+            num_inference_steps=steps,
+        )
+        denoised_latents = np.array(result.latents, dtype=np.float32)
+        denoised_items.append((Path(output), item_seed, denoised_latents, [int(dim) for dim in denoised_latents.shape]))
     loaded_keys = transformer.weight_report["loaded_keys"]
     del transformer, result
     _release_mlx_memory()
     decoder = MLXAutoencoderDCDecoder.from_snapshot(snapshot_path, dtype=mlx_dtype)
-    decoded = _decode_latents(
-        decoder,
-        denoised_latents / _scaling_factor(snapshot_path),
-        tiled_decode=tiled_decode,
-    )
-    image = _postprocess(decoded[0])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(output_path)
-    return {
-        "mode": "mlx_transformer_mlx_decode",
-        "output": str(output_path),
-        "model": str(snapshot_path),
-        "height": height,
-        "width": width,
-        "steps": steps,
-        "seed": seed,
-        "mlx_dtype": mlx_dtype,
-        "prompt_source": prompt_source,
-        "decode_mode": "tiled_mlx_decode" if tiled_decode else "mlx_decode",
-        "latents_shape": latents_shape,
-        "loaded_keys": loaded_keys,
-        "runtime": {"wall_time_seconds": time.perf_counter() - start},
-        "memory": {"max_rss_bytes": _max_rss_bytes()},
-    }
+    scale = _scaling_factor(snapshot_path)
+    reports = []
+    for output_path, item_seed, denoised_latents, latents_shape in denoised_items:
+        decoded = _decode_latents(
+            decoder,
+            denoised_latents / scale,
+            tiled_decode=tiled_decode,
+        )
+        image = _postprocess(decoded[0])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(output_path)
+        reports.append(
+            {
+                "mode": "mlx_transformer_mlx_decode",
+                "output": str(output_path),
+                "model": str(snapshot_path),
+                "height": height,
+                "width": width,
+                "steps": steps,
+                "seed": item_seed,
+                "mlx_dtype": mlx_dtype,
+                "prompt_source": prompt_source,
+                "decode_mode": "tiled_mlx_decode" if tiled_decode else "mlx_decode",
+                "latents_shape": latents_shape,
+                "loaded_keys": loaded_keys,
+                "runtime": {"wall_time_seconds": time.perf_counter() - start},
+                "memory": {"max_rss_bytes": _max_rss_bytes()},
+            }
+        )
+    return reports
 
 
 def _decode_latents(decoder: MLXAutoencoderDCDecoder, latents: np.ndarray, *, tiled_decode: bool) -> np.ndarray:

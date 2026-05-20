@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sanasprint_mlx.generate.plan import GenerationRequest, build_phase_plan
 from sanasprint_mlx.generate.mlx_reference_decode import run_mlx_reference_decode_generation
-from sanasprint_mlx.generate.mlx_native import run_mlx_generation
+from sanasprint_mlx.generate.mlx_native import run_mlx_batch_generation, run_mlx_generation
 from sanasprint_mlx.generate.reference_bridge import (
     run_reference_pipeline_batch_generation,
     run_reference_pipeline_generation,
@@ -143,20 +143,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.prompt_cache is not None or args.prompt is not None:
-        if args.count != 1:
-            return _error("native MLX generation currently supports --count 1 only")
         try:
-            report = run_mlx_generation(
-                prompt=args.prompt,
-                prompt_cache=args.prompt_cache,
-                height=args.height,
-                width=args.width,
-                steps=args.steps,
-                seed=args.seed,
-                output=args.output,
-                snapshot=args.snapshot,
-                tiled_decode=args.tiled_decode,
-            )
+            if args.count == 1:
+                report = run_mlx_generation(
+                    prompt=args.prompt,
+                    prompt_cache=args.prompt_cache,
+                    height=args.height,
+                    width=args.width,
+                    steps=args.steps,
+                    seed=args.seed,
+                    output=args.output,
+                    snapshot=args.snapshot,
+                    tiled_decode=args.tiled_decode,
+                )
+            else:
+                args.output_dir.mkdir(parents=True, exist_ok=True)
+                outputs = _batch_output_paths(args.output, args.output_dir, args.count)
+                reports = run_mlx_batch_generation(
+                    prompt=args.prompt,
+                    prompt_cache=args.prompt_cache,
+                    height=args.height,
+                    width=args.width,
+                    steps=args.steps,
+                    seed=args.seed,
+                    outputs=outputs,
+                    snapshot=args.snapshot,
+                    tiled_decode=args.tiled_decode,
+                )
+                report = _native_batch_report(reports)
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             return _error(str(error))
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -181,6 +195,18 @@ def _batch_report(reports: list[dict]) -> dict:
         "device": first["device"],
         "low_memory": first["low_memory"],
         "torch_dtype": first["torch_dtype"],
+        "count": len(reports),
+        "outputs": reports,
+    }
+
+
+def _native_batch_report(reports: list[dict]) -> dict:
+    first = reports[0]
+    return {
+        "model": first["model"],
+        "mode": first["mode"],
+        "decode_mode": first["decode_mode"],
+        "prompt_source": first["prompt_source"],
         "count": len(reports),
         "outputs": reports,
     }

@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 
-from sanasprint_mlx.generate.mlx_native import run_mlx_generation
+from sanasprint_mlx.generate.mlx_native import run_mlx_batch_generation, run_mlx_generation
 from sanasprint_mlx.cli.weights import make_synthetic_snapshot
 from sanasprint_mlx.text.encoder import EncodedPrompt
 from sanasprint_mlx.text.cache import write_prompt_cache
@@ -209,3 +211,53 @@ def test_mlx_generation_uses_tiled_decode_wrapper_when_requested(tmp_path, monke
     assert report["decode_mode"] == "tiled_mlx_decode"
     assert calls["wrapper"]["config"].use_tiling is True
     assert calls["decode"]["return_dict"] is False
+
+
+def test_mlx_batch_generation_reuses_loaded_components_and_increments_seeds(tmp_path, monkeypatch):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    calls = {"transformer_loads": 0, "decoder_loads": 0, "seeds": []}
+
+    def fake_transformer_from_snapshot(*args, **kwargs):
+        calls["transformer_loads"] += 1
+        return FakeTransformer()
+
+    def fake_decoder_from_snapshot(*args, **kwargs):
+        calls["decoder_loads"] += 1
+        return FakeDecoder()
+
+    def fake_latents(*, channels, height, width, seed):
+        calls["seeds"].append(seed)
+        return np.zeros((1, channels, height, width), dtype=np.float32)
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", fake_transformer_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", fake_decoder_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native._latents", fake_latents)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", lambda **kwargs: FakeLoopResult())
+
+    reports = run_mlx_batch_generation(
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=10,
+        outputs=[tmp_path / "one.png", tmp_path / "two.png"],
+        snapshot=snapshot,
+    )
+
+    assert calls["transformer_loads"] == 1
+    assert calls["decoder_loads"] == 1
+    assert calls["seeds"] == [10, 11]
+    assert [Path(report["output"]).name for report in reports] == ["one.png", "two.png"]
+    assert [report["seed"] for report in reports] == [10, 11]

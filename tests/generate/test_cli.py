@@ -181,6 +181,56 @@ def test_generate_cli_reference_pipeline_batch_uses_output_dir_and_count(tmp_pat
     assert report["model"] == str(tmp_path / "snapshot")
 
 
+def test_generate_cli_native_batch_uses_output_dir_and_count(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run_batch(**kwargs):
+        calls.append(kwargs)
+        for output in kwargs["outputs"]:
+            output.write_bytes(b"png")
+        return [
+            {
+                "output": str(output),
+                "model": str(kwargs["snapshot"]),
+                "height": kwargs["height"],
+                "width": kwargs["width"],
+                "steps": kwargs["steps"],
+                "seed": kwargs["seed"] + index,
+                "mode": "mlx_transformer_mlx_decode",
+                "decode_mode": "mlx_decode",
+                "prompt_source": "mlx_text_encoder",
+            }
+            for index, output in enumerate(kwargs["outputs"])
+        ]
+
+    monkeypatch.setattr(generate_cli, "run_mlx_batch_generation", fake_run_batch)
+
+    code = main(
+        [
+            "--prompt",
+            "warm",
+            "--output",
+            str(tmp_path / "sample.png"),
+            "--output-dir",
+            str(tmp_path / "batch"),
+            "--count",
+            "2",
+            "--seed",
+            "30",
+            "--snapshot",
+            str(tmp_path / "snapshot"),
+        ]
+    )
+
+    assert code == 0
+    assert [path.name for path in calls[0]["outputs"]] == ["sample-0001.png", "sample-0002.png"]
+    assert calls[0]["seed"] == 30
+    report = json.loads(capsys.readouterr().out)
+    assert report["count"] == 2
+    assert report["mode"] == "mlx_transformer_mlx_decode"
+    assert [item["seed"] for item in report["outputs"]] == [30, 31]
+
+
 def test_generate_cli_reference_pipeline_batch_requires_output_dir_before_generation(tmp_path, monkeypatch):
     calls = []
 
