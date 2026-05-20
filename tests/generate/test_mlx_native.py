@@ -2,6 +2,7 @@ import numpy as np
 
 from sanasprint_mlx.generate.mlx_native import run_mlx_generation
 from sanasprint_mlx.cli.weights import make_synthetic_snapshot
+from sanasprint_mlx.text.encoder import EncodedPrompt
 from sanasprint_mlx.text.cache import write_prompt_cache
 
 
@@ -70,3 +71,47 @@ def test_mlx_generation_uses_prompt_cache_transformer_and_mlx_decoder(tmp_path, 
     assert calls["transformer"]["sample_size"] == 1
     assert calls["loop"]["num_inference_steps"] == 1
     assert calls["decoder"]["dtype"] == "bfloat16"
+
+
+def test_mlx_generation_uses_native_prompt_encoder_without_cache(tmp_path, monkeypatch):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    calls = {}
+
+    def fake_encode_prompt_mlx(**kwargs):
+        calls["prompt"] = kwargs
+        return EncodedPrompt(
+            prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+            prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        )
+
+    def fake_transformer_from_snapshot(*args, **kwargs):
+        return FakeTransformer()
+
+    def fake_decoder_from_snapshot(*args, **kwargs):
+        return FakeDecoder()
+
+    def fake_loop(**kwargs):
+        calls["loop"] = kwargs
+        return FakeLoopResult()
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.encode_prompt_mlx", fake_encode_prompt_mlx)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", fake_transformer_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", fake_decoder_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", fake_loop)
+
+    output = tmp_path / "out.png"
+    report = run_mlx_generation(
+        prompt="raw prompt",
+        height=2,
+        width=2,
+        steps=1,
+        seed=7,
+        output=output,
+        snapshot=snapshot,
+    )
+
+    assert output.exists()
+    assert report["prompt_source"] == "mlx_text_encoder"
+    assert calls["prompt"]["prompt"] == "raw prompt"
+    assert calls["prompt"]["snapshot"] == snapshot
+    np.testing.assert_array_equal(calls["loop"]["prompt_attention_mask"], np.ones((1, 2), dtype=np.int32))

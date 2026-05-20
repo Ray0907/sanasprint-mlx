@@ -142,11 +142,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
 
-    if args.prompt_cache is not None:
+    if args.prompt_cache is not None or args.prompt is not None:
         if args.count != 1:
             return _error("native MLX generation currently supports --count 1 only")
         try:
             report = run_mlx_generation(
+                prompt=args.prompt,
                 prompt_cache=args.prompt_cache,
                 height=args.height,
                 width=args.width,
@@ -155,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                 output=args.output,
                 snapshot=args.snapshot,
             )
-        except (OSError, RuntimeError, ValueError) as error:
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
             return _error(str(error))
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0

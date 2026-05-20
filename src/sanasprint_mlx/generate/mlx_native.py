@@ -13,13 +13,16 @@ from sanasprint_mlx.autoencoder.mlx_decoder import MLXAutoencoderDCDecoder
 from sanasprint_mlx.pipeline.denoise import run_denoising_loop
 from sanasprint_mlx.scheduler.scm import SCMScheduler
 from sanasprint_mlx.text.cache import read_prompt_cache
+from sanasprint_mlx.text.instruction import DEFAULT_COMPLEX_HUMAN_INSTRUCTION
+from sanasprint_mlx.text.mlx_encoder import encode_prompt_mlx
 from sanasprint_mlx.transformer.real_model import RealSanaTransformerDenoiser
 from sanasprint_mlx.weights.config import load_transformer_config, summarize_transformer_config
 
 
 def run_mlx_generation(
     *,
-    prompt_cache: str | Path,
+    prompt: str | None = None,
+    prompt_cache: str | Path | None = None,
     height: int,
     width: int,
     steps: int,
@@ -31,7 +34,11 @@ def run_mlx_generation(
     start = time.perf_counter()
     snapshot_path = _require_local_snapshot(snapshot)
     output_path = Path(output)
-    prompt_embeds, prompt_attention_mask = _read_prompt_inputs(prompt_cache)
+    prompt_embeds, prompt_attention_mask, prompt_source = _prompt_inputs(
+        prompt=prompt,
+        prompt_cache=prompt_cache,
+        snapshot=snapshot_path,
+    )
     summary = summarize_transformer_config(load_transformer_config(snapshot_path))
     sample_size = max(height // 32, 1)
     latents = _latents(
@@ -68,12 +75,31 @@ def run_mlx_generation(
         "steps": steps,
         "seed": seed,
         "mlx_dtype": mlx_dtype,
-        "prompt_source": "prompt_cache",
+        "prompt_source": prompt_source,
         "latents_shape": [int(dim) for dim in np.array(result.latents).shape],
         "loaded_keys": transformer.weight_report["loaded_keys"],
         "runtime": {"wall_time_seconds": time.perf_counter() - start},
         "memory": {"max_rss_bytes": _max_rss_bytes()},
     }
+
+
+def _prompt_inputs(
+    *,
+    prompt: str | None,
+    prompt_cache: str | Path | None,
+    snapshot: Path,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    if prompt_cache is not None:
+        prompt_embeds, prompt_attention_mask = _read_prompt_inputs(prompt_cache)
+        return prompt_embeds, prompt_attention_mask, "prompt_cache"
+    if prompt is None:
+        raise ValueError("native MLX generation requires prompt or prompt_cache")
+    encoded = encode_prompt_mlx(
+        prompt=prompt,
+        snapshot=snapshot,
+        complex_human_instruction=DEFAULT_COMPLEX_HUMAN_INSTRUCTION,
+    )
+    return encoded.prompt_embeds, encoded.prompt_attention_mask, "mlx_text_encoder"
 
 
 def _read_prompt_inputs(prompt_cache: str | Path) -> tuple[np.ndarray, np.ndarray]:

@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
   "huggingface-hub",
   "mlx",
+  "mlx-lm",
   "numpy",
   "pillow",
   "safetensors",

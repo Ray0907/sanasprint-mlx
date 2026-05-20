@@ -2,9 +2,9 @@
 
 Experimental MLX inference project for `Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers`.
 
-Current status: fixture infrastructure, local weight inspection, selective scaffold projection loading, memory feasibility estimates, small MLX primitive scaffolding, transformer denoiser contract scaffold, scheduler/denoising-loop scaffold, hybrid generation CLI, text-encoding cache/adapter scaffolding, AutoencoderDC decode scaffolding, baseline manifest validation, locked cold benchmarking, and real verification gate reporting are implemented. A real 512x512 image has been generated through the Diffusers reference pipeline on MPS. Full MLX-native transformer, text encoder, VAE decode, and loop parity remain blocked until parity fixtures pass.
+Current status: fixture infrastructure, local weight inspection, selective scaffold projection loading, memory feasibility estimates, MLX primitive scaffolding, scheduler/denoising-loop scaffolding, hybrid generation CLI, prompt-cache generation, real MLX transformer denoising, real MLX Gemma2 prompt encoding, real MLX AutoencoderDC decode, baseline manifest validation, locked cold benchmarking, and real verification gate reporting are implemented. A real 512x512 image has been generated through both the Diffusers reference pipeline on MPS and the native MLX prompt -> transformer -> VAE path on Apple Silicon.
 
-The first hardware target is Apple Silicon with 16GB unified memory. The runtime design uses sequential component loading, cached prompt embeddings, and explicit memory measurements so the 16GB path is tested instead of assumed.
+The first hardware target is Apple Silicon with 16GB unified memory. The runtime design uses sequential component loading, prompt-cache support, and explicit memory measurements so the 16GB path is tested instead of assumed.
 
 ## Showcase
 
@@ -48,7 +48,7 @@ python3 -m pip install -e ".[dev]"
 python3 -m pytest tests -v
 ```
 
-PyTorch and Diffusers are optional reference dependencies for later fixture generation:
+PyTorch and Diffusers are optional reference dependencies for fixture generation and reference comparisons:
 
 ```bash
 python3 -m pip install -e ".[dev,reference]"
@@ -153,7 +153,30 @@ PYTHONPATH=src python3 -m sanasprint_mlx.cli.generate \
   --reference-decode
 ```
 
-The dry-run plan records `text_encode -> denoise -> decode -> write_png` and the unload order for 16GB unified memory. Actual image generation remains an opt-in real smoke path and is not verified by default tests.
+The dry-run plan records `text_encode -> denoise -> decode -> write_png` and the unload order for 16GB unified memory.
+
+Run the native MLX path from a raw prompt:
+
+```bash
+.venv/bin/python -m sanasprint_mlx.cli.generate \
+  --prompt "a cinematic macro photograph of a translucent glass apple on a wet black stone table, sharp reflections, studio rim light, ultra detailed" \
+  --height 512 \
+  --width 512 \
+  --steps 2 \
+  --seed 42 \
+  --snapshot /path/to/Sana_Sprint_0.6B_1024px_diffusers \
+  --output /tmp/sanasprint-mlx-native.png
+```
+
+Latest local raw-prompt MLX smoke result on Apple M4 with 16GB unified memory:
+
+- Mode: `mlx_transformer_mlx_decode`
+- Prompt source: `mlx_text_encoder`
+- Image: `512x512`, 2 inference steps, seed `42`
+- Wall time: `8.11s` from `/usr/bin/time -l`; runtime report `6.11s`
+- Peak memory: `5.12 GiB` maximum resident set size (`5,501,419,520` bytes)
+- Peak footprint: `10.44 GiB` (`11,212,229,080` bytes)
+- Output quality check: sharp translucent red glass apple, wet black surface, visible reflections, and no blank/corrupt image output.
 
 Run the real Diffusers reference pipeline path:
 
@@ -173,11 +196,11 @@ python3 -m venv .venv
   --low-memory
 ```
 
-This path is intentionally labeled `--reference-pipeline`: it proves the project can run the SanaSprint model and write a PNG, but it is not yet MLX-native parity.
+This path is intentionally labeled `--reference-pipeline`: it proves the project can run the SanaSprint model and write a PNG through Diffusers, and remains useful as a baseline for MLX-native comparisons.
 
 ## Text Encoding
 
-The text package provides a Diffusers-compatible prompt encoding contract scaffold: Gemma-style tokenizer calls, selected-index handling, prompt embedding duplication, and prompt cache read/write helpers. Default tests use fake tokenizer/encoder objects only.
+The text package provides a Diffusers-compatible prompt encoding path: Gemma-style tokenizer calls, selected-index handling, prompt embedding duplication, prompt cache read/write helpers, and native MLX Gemma2 hidden-state encoding through `mlx-lm`.
 
 Prompt cache dry-run skips text encoding:
 
@@ -190,11 +213,11 @@ PYTHONPATH=src python3 -m sanasprint_mlx.cli.generate \
   --plan-output /tmp/sanasprint-mlx-prompt-cache-plan.json
 ```
 
-Real Gemma2 prompt embedding parity requires `SANASPRINT_MLX_REAL_TEXT_FIXTURE` and remains unverified by default tests.
+Real Gemma2 prompt embedding parity is covered by an opt-in local snapshot test when the SanaSprint snapshot and prompt cache are present. Default tests still avoid model downloads.
 
 ## Autoencoder Decode
 
-The autoencoder package provides an AutoencoderDC decode contract scaffold with slicing dispatch, tiled decode planning, overlap blending helpers, and conservative VAE decoder weight mapping. Generate dry-runs can label decode as `reference_decode`, `mlx_decode`, or `tiled_mlx_decode`. Default tests use fake decoders only.
+The autoencoder package provides an AutoencoderDC decode implementation with slicing dispatch, tiled decode planning, overlap blending helpers, conservative VAE decoder weight mapping, and a real MLX decoder path for SanaSprint. Generate dry-runs can label decode as `reference_decode`, `mlx_decode`, or `tiled_mlx_decode`. Default tests use fake decoders and small parity fixtures where possible.
 
 Real VAE decode parity requires `SANASPRINT_MLX_REAL_DECODE_FIXTURE` and remains unverified by default tests.
 
