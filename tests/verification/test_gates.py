@@ -94,6 +94,24 @@ def test_pass_evidence_can_mark_block0_attention_passed(tmp_path):
     assert gate(report, "block0_attention")["status"] == "PASS"
 
 
+def test_pass_evidence_can_mark_block_stack_passed(tmp_path):
+    evidence = {
+        "schema_version": 1,
+        "gates": {
+            "block_stack": {
+                "status": "PASS",
+                "command": "cmd",
+                "artifact": str(tmp_path),
+                "observed_at": "2026-05-20T00:00:00Z",
+            }
+        },
+    }
+
+    report = build_verification_report(env={}, pass_evidence=evidence)
+
+    assert gate(report, "block_stack")["status"] == "PASS"
+
+
 def test_invalid_pass_evidence_is_rejected(tmp_path):
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps({"schema_version": 1, "gates": {"feature_9_preconditions": {"status": "PASS"}}}))
@@ -147,6 +165,7 @@ def test_report_includes_real_verification_commands():
 
     assert "tests/transformer/test_real_fixture_parity.py" in gate(report, "transformer_parity")["command"]
     assert "sanasprint-mlx-verify block0-attention" in gate(report, "block0_attention")["command"]
+    assert "sanasprint-mlx-verify block-stack" in gate(report, "block_stack")["command"]
     assert "sanasprint-mlx-verify scaffold-denoise" in gate(report, "scaffold_denoise")["command"]
     assert "sanasprint-mlx-generate" in gate(report, "smoke_512")["command"]
 
@@ -161,6 +180,18 @@ def test_block0_attention_gate_requires_local_snapshot(tmp_path):
 
     assert gate(ready, "block0_attention")["status"] == "READY"
     assert gate(remote, "block0_attention")["status"] == "BLOCKED"
+
+
+def test_block_stack_gate_requires_local_snapshot(tmp_path):
+    ready = build_verification_report(env={}, snapshot=tmp_path)
+    remote = build_verification_report(
+        env={},
+        snapshot="Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
+        allow_download=True,
+    )
+
+    assert gate(ready, "block_stack")["status"] == "READY"
+    assert gate(remote, "block_stack")["status"] == "BLOCKED"
 
 
 def test_scaffold_denoise_gate_requires_local_snapshot(tmp_path):
