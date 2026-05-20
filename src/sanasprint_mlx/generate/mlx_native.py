@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import resource
 import sys
@@ -61,8 +62,13 @@ def run_mlx_generation(
         prompt_attention_mask=prompt_attention_mask,
         num_inference_steps=steps,
     )
+    denoised_latents = np.array(result.latents, dtype=np.float32)
+    latents_shape = [int(dim) for dim in denoised_latents.shape]
+    loaded_keys = transformer.weight_report["loaded_keys"]
+    del transformer, result
+    _release_mlx_memory()
     decoder = MLXAutoencoderDCDecoder.from_snapshot(snapshot_path, dtype=mlx_dtype)
-    decoded = np.array(decoder.decode(np.array(result.latents, dtype=np.float32) / _scaling_factor(snapshot_path)))
+    decoded = np.array(decoder.decode(denoised_latents / _scaling_factor(snapshot_path)))
     image = _postprocess(decoded[0])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
@@ -76,8 +82,8 @@ def run_mlx_generation(
         "seed": seed,
         "mlx_dtype": mlx_dtype,
         "prompt_source": prompt_source,
-        "latents_shape": [int(dim) for dim in np.array(result.latents).shape],
-        "loaded_keys": transformer.weight_report["loaded_keys"],
+        "latents_shape": latents_shape,
+        "loaded_keys": loaded_keys,
         "runtime": {"wall_time_seconds": time.perf_counter() - start},
         "memory": {"max_rss_bytes": _max_rss_bytes()},
     }
@@ -144,6 +150,15 @@ def _require_local_snapshot(snapshot: str | Path | None) -> Path:
     if not path.exists():
         raise FileNotFoundError(path)
     return path
+
+
+def _release_mlx_memory() -> None:
+    gc.collect()
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return
+    mx.clear_cache()
 
 
 def _max_rss_bytes() -> int:

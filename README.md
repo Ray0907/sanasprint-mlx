@@ -173,9 +173,9 @@ Latest local raw-prompt MLX smoke result on Apple M4 with 16GB unified memory:
 - Mode: `mlx_transformer_mlx_decode`
 - Prompt source: `mlx_text_encoder`
 - Image: `512x512`, 2 inference steps, seed `42`
-- Wall time: `8.11s` from `/usr/bin/time -l`; runtime report `6.11s`
-- Peak memory: `5.12 GiB` maximum resident set size (`5,501,419,520` bytes)
-- Peak footprint: `10.44 GiB` (`11,212,229,080` bytes)
+- Wall time: `9.31s` from `/usr/bin/time -l`; runtime report `7.02s`
+- Peak memory: `5.23 GiB` maximum resident set size (`5,611,487,232` bytes)
+- Peak footprint: `10.47 GiB` (`11,240,818,392` bytes)
 - Output quality check: sharp translucent red glass apple, wet black surface, visible reflections, and no blank/corrupt image output.
 
 Run the real Diffusers reference pipeline path:
