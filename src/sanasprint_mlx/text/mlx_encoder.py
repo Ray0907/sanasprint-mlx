@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from sanasprint_mlx.memory.mlx_cache import trim_mlx_cache
 from sanasprint_mlx.text.config import TextEncoderConfig
 from sanasprint_mlx.text.encoder import EncodedPrompt
 from sanasprint_mlx.text.tokenizer import prepare_prompt_inputs, select_prompt_tokens
@@ -40,7 +41,7 @@ def encode_prompt_mlx(
 
     del hidden_states, model
     gc.collect()
-    mx.clear_cache()
+    trim_mlx_cache(mx)
     return EncodedPrompt(prompt_embeds=prompt_embeds, prompt_attention_mask=prompt_attention_mask)
 
 

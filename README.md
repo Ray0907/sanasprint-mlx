@@ -5,6 +5,7 @@ Experimental MLX inference project for `Efficient-Large-Model/Sana_Sprint_0.6B_1
 Current status: the primary text-to-image path is native MLX end to end for SanaSprint 0.6B: raw prompt text encoding, transformer denoising, AutoencoderDC decode, tiled decode, and warm batch generation all run through MLX. Diffusers/PyTorch paths remain available only as explicit reference and debugging baselines.
 
 The first hardware target is Apple Silicon with 16GB unified memory. The runtime design uses sequential component loading, prompt-cache support, and explicit memory measurements so the 16GB path is tested instead of assumed.
+Native generation clamps the MLX allocator cache during runs to reduce macOS peak footprint after component transitions.
 
 ## Showcase
 
@@ -202,9 +203,9 @@ Latest local raw-prompt MLX smoke result on Apple M4 with 16GB unified memory:
 - Mode: `mlx_transformer_mlx_decode`
 - Prompt source: `mlx_text_encoder`
 - Image: `512x512`, 2 inference steps, seed `42`
-- Wall time: `9.31s` from `/usr/bin/time -l`; runtime report `7.02s`
-- Peak memory: `5.23 GiB` maximum resident set size (`5,611,487,232` bytes)
-- Peak footprint: `10.47 GiB` (`11,240,818,392` bytes)
+- Wall time: `9.60s` from `/usr/bin/time -l`; runtime report `7.35s`
+- Peak memory: `4.39 GiB` maximum resident set size (`4,717,051,904` bytes)
+- Peak footprint: `5.53 GiB` (`5,941,859,560` bytes)
 - Output quality check: sharp translucent red glass apple, wet black surface, visible reflections, and no blank/corrupt image output.
 
 Latest local tiled MLX decode smoke result on the same machine:
@@ -213,9 +214,9 @@ Latest local tiled MLX decode smoke result on the same machine:
 - Decode mode: `tiled_mlx_decode`
 - Prompt source: `mlx_text_encoder`
 - Image: `768x768`, 2 inference steps, seed `42`
-- Wall time: `12.05s` from `/usr/bin/time -l`; runtime report `9.65s`
-- Peak memory: `4.50 GiB` maximum resident set size (`4,830,068,736` bytes)
-- Peak footprint: `10.58 GiB` (`11,357,767,264` bytes)
+- Wall time: `12.07s` from `/usr/bin/time -l`; runtime report `9.86s`
+- Peak memory: `3.70 GiB` maximum resident set size (`3,970,646,016` bytes)
+- Peak footprint: `5.54 GiB` (`5,947,282,688` bytes)
 - Output quality check: sharp translucent glass apple on a wet black surface, visible reflections, and no obvious tile-boundary artifacts.
 
 Latest local warm native batch smoke result on the same machine:
@@ -224,9 +225,9 @@ Latest local warm native batch smoke result on the same machine:
 - Count: `2`
 - Seeds: `42`, `43`
 - Image: `512x512`, 2 inference steps
-- Wall time: `10.70s` from `/usr/bin/time -l`
-- Peak memory: `5.02 GiB` maximum resident set size (`5,388,550,144` bytes)
-- Peak footprint: `10.55 GiB` (`11,330,832,184` bytes)
+- Wall time: `11.24s` from `/usr/bin/time -l`
+- Peak memory: `3.95 GiB` maximum resident set size (`4,243,849,216` bytes)
+- Peak footprint: `5.53 GiB` (`5,938,746,576` bytes)
 - Output quality check: both images are sharp translucent glass apples on wet black surfaces, with distinct seed variation and no blank/corrupt output.
 
 Run the real Diffusers reference pipeline path:

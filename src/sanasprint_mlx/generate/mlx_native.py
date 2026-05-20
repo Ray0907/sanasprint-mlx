@@ -13,6 +13,7 @@ from PIL import Image
 from sanasprint_mlx.autoencoder.config import AutoencoderDecodeConfig
 from sanasprint_mlx.autoencoder.decode import AutoencoderDCDecode
 from sanasprint_mlx.autoencoder.mlx_decoder import MLXAutoencoderDCDecoder
+from sanasprint_mlx.memory.mlx_cache import mlx_cache_limit, trim_mlx_cache
 from sanasprint_mlx.pipeline.denoise import run_denoising_loop
 from sanasprint_mlx.scheduler.scm import SCMScheduler
 from sanasprint_mlx.text.cache import read_prompt_cache
@@ -64,6 +65,34 @@ def run_mlx_batch_generation(
 ) -> list[dict]:
     if not outputs:
         raise ValueError("batch generation requires at least one output")
+    with mlx_cache_limit(0):
+        return _run_mlx_batch_generation_uncached(
+            prompt=prompt,
+            prompt_cache=prompt_cache,
+            height=height,
+            width=width,
+            steps=steps,
+            seed=seed,
+            outputs=outputs,
+            snapshot=snapshot,
+            mlx_dtype=mlx_dtype,
+            tiled_decode=tiled_decode,
+        )
+
+
+def _run_mlx_batch_generation_uncached(
+    *,
+    prompt: str | None,
+    prompt_cache: str | Path | None,
+    height: int,
+    width: int,
+    steps: int,
+    seed: int,
+    outputs: list[str | Path],
+    snapshot: str | Path | None,
+    mlx_dtype: str,
+    tiled_decode: bool,
+) -> list[dict]:
     start = time.perf_counter()
     snapshot_path = _require_local_snapshot(snapshot)
     prompt_embeds, prompt_attention_mask, prompt_source = _prompt_inputs(
@@ -217,11 +246,7 @@ def _require_local_snapshot(snapshot: str | Path | None) -> Path:
 
 def _release_mlx_memory() -> None:
     gc.collect()
-    try:
-        import mlx.core as mx
-    except ImportError:
-        return
-    mx.clear_cache()
+    trim_mlx_cache()
 
 
 def _max_rss_bytes() -> int:

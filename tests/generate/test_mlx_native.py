@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+from contextlib import contextmanager
 
 from sanasprint_mlx.generate.mlx_native import run_mlx_batch_generation, run_mlx_generation
 from sanasprint_mlx.cli.weights import make_synthetic_snapshot
@@ -261,3 +262,49 @@ def test_mlx_batch_generation_reuses_loaded_components_and_increments_seeds(tmp_
     assert calls["seeds"] == [10, 11]
     assert [Path(report["output"]).name for report in reports] == ["one.png", "two.png"]
     assert [report["seed"] for report in reports] == [10, 11]
+
+
+def test_mlx_batch_generation_runs_inside_zero_cache_limit(tmp_path, monkeypatch):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    cache = tmp_path / "prompt-cache"
+    write_prompt_cache(
+        cache,
+        prompt="cached",
+        prompt_embeds=np.ones((1, 2, 4), dtype=np.float32),
+        prompt_attention_mask=np.ones((1, 2), dtype=np.int32),
+        tokenizer_id="fake",
+        model_id="fake",
+        max_sequence_length=2,
+        clean_caption=False,
+        complex_human_instruction=[],
+    )
+    events = []
+
+    @contextmanager
+    def fake_cache_limit(limit):
+        events.append(("enter_cache_limit", limit))
+        yield
+        events.append("exit_cache_limit")
+
+    def fake_transformer_from_snapshot(*args, **kwargs):
+        events.append("load_transformer")
+        return FakeTransformer()
+
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.mlx_cache_limit", fake_cache_limit)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.RealSanaTransformerDenoiser.from_snapshot", fake_transformer_from_snapshot)
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.MLXAutoencoderDCDecoder.from_snapshot", lambda *args, **kwargs: FakeDecoder())
+    monkeypatch.setattr("sanasprint_mlx.generate.mlx_native.run_denoising_loop", lambda **kwargs: FakeLoopResult())
+
+    run_mlx_batch_generation(
+        prompt_cache=cache,
+        height=2,
+        width=2,
+        steps=1,
+        seed=10,
+        outputs=[tmp_path / "one.png"],
+        snapshot=snapshot,
+    )
+
+    assert events[0] == ("enter_cache_limit", 0)
+    assert "load_transformer" in events
+    assert events[-1] == "exit_cache_limit"
