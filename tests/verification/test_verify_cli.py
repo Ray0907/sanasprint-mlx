@@ -137,3 +137,15 @@ def test_verify_cli_scaffold_denoise_rejects_remote_snapshot(tmp_path):
 
     assert code == 2
     assert not output.exists()
+
+
+def test_verify_cli_block0_attention_writes_report(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot")
+    output = tmp_path / "block0-attention.json"
+
+    code = main(["block0-attention", "--snapshot", str(snapshot), "--output", str(output), "--dtype", "float16"])
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["status"] == "PASS"
+    assert report["loaded_keys"]["count"] == 17

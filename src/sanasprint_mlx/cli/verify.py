@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from sanasprint_mlx.verification.gates import build_verification_report, load_pass_evidence
+from sanasprint_mlx.verification.block_attention import run_block0_attention_smoke
 from sanasprint_mlx.verification.hygiene import check_repository_hygiene
 from sanasprint_mlx.verification.report import write_verification_report
 from sanasprint_mlx.verification.scaffold_denoise import run_scaffold_denoise_smoke
@@ -22,6 +23,13 @@ def build_parser() -> argparse.ArgumentParser:
     scaffold.add_argument("--steps", type=int, default=1)
     scaffold.add_argument("--sequence-length", type=int, default=4)
     scaffold.add_argument("--real-caption-projection", action="store_true")
+
+    block0 = subparsers.add_parser("block0-attention", help="run a local MLX block-0 attention smoke check")
+    block0.add_argument("--snapshot", required=True)
+    block0.add_argument("--output", required=True, type=Path)
+    block0.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
+    block0.add_argument("--seed", type=int, default=0)
+    block0.add_argument("--sequence-length", type=int, default=4)
 
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot")
@@ -53,6 +61,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             write_verification_report(report, args.output)
             print(f"wrote scaffold denoise report: {args.output}")
+            return 0 if report["status"] == "PASS" else 2
+        if args.command == "block0-attention":
+            if _looks_remote(args.snapshot):
+                raise ValueError("--snapshot must be a local path, not a remote URL")
+            report = run_block0_attention_smoke(
+                args.snapshot,
+                dtype=args.dtype,
+                seed=args.seed,
+                sequence_length=args.sequence_length,
+            )
+            write_verification_report(report, args.output)
+            print(f"wrote block0 attention report: {args.output}")
             return 0 if report["status"] == "PASS" else 2
 
         if args.output is None:

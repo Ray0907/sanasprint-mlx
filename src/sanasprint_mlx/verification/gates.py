@@ -7,6 +7,7 @@ from typing import Any
 
 KNOWN_EVIDENCE_GATES = {
     "transformer_parity",
+    "block0_attention",
     "loop_parity",
     "text_parity",
     "decode_parity",
@@ -60,6 +61,7 @@ def build_verification_report(
         path = fixture_overrides.get(gate_id) or env.get(env_var)
         gates[gate_id] = _fixture_gate(gate_id, env_var, path, command_template, evidence)
     gates["snapshot"] = _snapshot_gate(snapshot, allow_download)
+    gates["block0_attention"] = _block0_attention_gate(snapshot, evidence)
     gates["scaffold_denoise"] = _scaffold_denoise_gate(snapshot, allow_download, evidence)
     gates["smoke_512"] = _smoke_gate(512, snapshot, allow_download, evidence)
     gates["smoke_768"] = _smoke_gate(768, snapshot, allow_download, evidence)
@@ -169,6 +171,40 @@ def _scaffold_denoise_gate(snapshot, allow_download: bool, evidence: dict) -> di
             "id": gate_id,
             "status": "BLOCKED",
             "reason": "scaffold denoise requires a local snapshot path",
+            "command": command,
+        }
+    exists = Path(snapshot).exists()
+    return {
+        "id": gate_id,
+        "status": "READY" if exists else "BLOCKED",
+        "reason": "local snapshot exists" if exists else "local snapshot path does not exist",
+        "command": command,
+    }
+
+
+def _block0_attention_gate(snapshot, evidence: dict) -> dict:
+    gate_id = "block0_attention"
+    command = (
+        "sanasprint-mlx-verify block0-attention "
+        f"--snapshot {snapshot or '/path/to/Sana_Sprint_0.6B_1024px_diffusers'} "
+        "--output /tmp/sanasprint-mlx-block0-attention.json "
+        "--dtype bfloat16"
+    )
+    if gate_id in evidence["gates"]:
+        item = dict(evidence["gates"][gate_id])
+        return {"id": gate_id, "status": "PASS", "reason": "external pass evidence", "command": command, **item}
+    if snapshot is None:
+        return {
+            "id": gate_id,
+            "status": "BLOCKED",
+            "reason": "missing local snapshot path",
+            "command": command,
+        }
+    if _looks_remote(snapshot):
+        return {
+            "id": gate_id,
+            "status": "BLOCKED",
+            "reason": "block0 attention requires a local snapshot path",
             "command": command,
         }
     exists = Path(snapshot).exists()

@@ -97,22 +97,21 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         )
         + "\n"
     )
-    save_file(
-        {
-            "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
-            "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
-            "transformer.caption_projection.linear_1.weight": np.eye(4, dtype=np.float32),
-            "transformer.caption_projection.linear_1.bias": np.zeros((4,), dtype=np.float32),
-            "transformer.caption_projection.linear_2.weight": np.eye(4, dtype=np.float32),
-            "transformer.caption_projection.linear_2.bias": np.zeros((4,), dtype=np.float32),
-            "transformer.caption_norm.weight": np.ones((4,), dtype=np.float32),
-            "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
-            "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
-            "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
-            "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
-        },
-        transformer_dir / "model.safetensors",
-    )
+    transformer_tensors = {
+        "transformer.patch_embed.proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+        "transformer.patch_embed.proj.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.caption_projection.linear_1.weight": np.eye(4, dtype=np.float32),
+        "transformer.caption_projection.linear_1.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.caption_projection.linear_2.weight": np.eye(4, dtype=np.float32),
+        "transformer.caption_projection.linear_2.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.caption_norm.weight": np.ones((4,), dtype=np.float32),
+        "transformer.proj_out.weight": np.zeros((4, 4), dtype=np.float32),
+        "transformer.proj_out.bias": np.zeros((4,), dtype=np.float32),
+        "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
+        "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
+    }
+    transformer_tensors.update(_synthetic_block_attention_tensors())
+    save_file(transformer_tensors, transformer_dir / "model.safetensors")
     save_file(
         {"text_encoder.embed_tokens.weight": np.zeros((8, 4), dtype=np.float16)},
         text_encoder_dir / "model.safetensors",
@@ -122,6 +121,20 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         vae_dir / "model.safetensors",
     )
     return output
+
+
+def _synthetic_block_attention_tensors() -> dict[str, np.ndarray]:
+    tensors = {}
+    prefix = "transformer_blocks.0"
+    for attention in ("attn1", "attn2"):
+        for projection in ("to_q", "to_k", "to_v", "to_out.0"):
+            tensors[f"{prefix}.{attention}.{projection}.weight"] = np.eye(4, dtype=np.float32)
+        tensors[f"{prefix}.{attention}.to_out.0.bias"] = np.zeros((4,), dtype=np.float32)
+        tensors[f"{prefix}.{attention}.norm_q.weight"] = np.ones((4,), dtype=np.float32)
+        tensors[f"{prefix}.{attention}.norm_k.weight"] = np.ones((4,), dtype=np.float32)
+    for projection in ("to_q", "to_k", "to_v"):
+        tensors[f"{prefix}.attn2.{projection}.bias"] = np.zeros((4,), dtype=np.float32)
+    return tensors
 
 
 def write_inspection_report(snapshot: str | Path, output: str | Path) -> Path:
