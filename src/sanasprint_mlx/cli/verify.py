@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sanasprint_mlx.verification.gates import build_verification_report, load_pass_evidence
 from sanasprint_mlx.verification.block_attention import run_block0_attention_smoke
+from sanasprint_mlx.verification.block_stack import run_block_stack_smoke
 from sanasprint_mlx.verification.hygiene import check_repository_hygiene
 from sanasprint_mlx.verification.report import write_verification_report
 from sanasprint_mlx.verification.scaffold_denoise import run_scaffold_denoise_smoke
@@ -30,6 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     block0.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
     block0.add_argument("--seed", type=int, default=0)
     block0.add_argument("--sequence-length", type=int, default=4)
+
+    block_stack = subparsers.add_parser("block-stack", help="run a local MLX real block stack smoke check")
+    block_stack.add_argument("--snapshot", required=True)
+    block_stack.add_argument("--output", required=True, type=Path)
+    block_stack.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
+    block_stack.add_argument("--seed", type=int, default=0)
+    block_stack.add_argument("--sequence-length", type=int, default=4)
+    block_stack.add_argument("--block-count", type=int, default=2)
 
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot")
@@ -73,6 +82,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             write_verification_report(report, args.output)
             print(f"wrote block0 attention report: {args.output}")
+            return 0 if report["status"] == "PASS" else 2
+        if args.command == "block-stack":
+            if _looks_remote(args.snapshot):
+                raise ValueError("--snapshot must be a local path, not a remote URL")
+            report = run_block_stack_smoke(
+                args.snapshot,
+                dtype=args.dtype,
+                seed=args.seed,
+                sequence_length=args.sequence_length,
+                block_count=args.block_count,
+            )
+            write_verification_report(report, args.output)
+            print(f"wrote block stack report: {args.output}")
             return 0 if report["status"] == "PASS" else 2
 
         if args.output is None:

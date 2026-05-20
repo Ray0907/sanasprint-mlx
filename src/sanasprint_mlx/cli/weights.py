@@ -70,7 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.error(f"unknown command: {args.command}")
 
 
-def make_synthetic_snapshot(output_dir: str | Path) -> Path:
+def make_synthetic_snapshot(output_dir: str | Path, *, num_layers: int = 1) -> Path:
+    if num_layers <= 0:
+        raise ValueError("num_layers must be positive")
     output = Path(output_dir)
     transformer_dir = output / "transformer"
     text_encoder_dir = output / "text_encoder"
@@ -87,7 +89,7 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
                 "attention_head_dim": 2,
                 "in_channels": 4,
                 "out_channels": 4,
-                "num_layers": 1,
+                "num_layers": num_layers,
                 "caption_channels": 4,
                 "sample_size": 2,
                 "patch_size": 1,
@@ -111,8 +113,9 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
         "transformer.transformer_blocks.0.attn1.to_q.weight": np.zeros((4, 4), dtype=np.float32),
         "transformer.transformer_blocks.0.ff.net.0.proj.weight": np.zeros((8, 4), dtype=np.float32),
     }
-    transformer_tensors.update(_synthetic_block_attention_tensors())
-    transformer_tensors.update(_synthetic_block_ffn_tensors())
+    for block_index in range(num_layers):
+        transformer_tensors.update(_synthetic_block_attention_tensors(block_index=block_index))
+        transformer_tensors.update(_synthetic_block_ffn_tensors(block_index=block_index))
     save_file(transformer_tensors, transformer_dir / "model.safetensors")
     save_file(
         {"text_encoder.embed_tokens.weight": np.zeros((8, 4), dtype=np.float16)},
@@ -125,9 +128,9 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
     return output
 
 
-def _synthetic_block_attention_tensors() -> dict[str, np.ndarray]:
+def _synthetic_block_attention_tensors(*, block_index: int = 0) -> dict[str, np.ndarray]:
     tensors = {}
-    prefix = "transformer_blocks.0"
+    prefix = f"transformer_blocks.{block_index}"
     tensors[f"{prefix}.scale_shift_table"] = np.zeros((6, 4), dtype=np.float32)
     for attention in ("attn1", "attn2"):
         for projection in ("to_q", "to_k", "to_v", "to_out.0"):
@@ -140,10 +143,10 @@ def _synthetic_block_attention_tensors() -> dict[str, np.ndarray]:
     return tensors
 
 
-def _synthetic_block_ffn_tensors() -> dict[str, np.ndarray]:
+def _synthetic_block_ffn_tensors(*, block_index: int = 0) -> dict[str, np.ndarray]:
     hidden_size = 4
     hidden_channels = 8
-    prefix = "transformer_blocks.0.ff"
+    prefix = f"transformer_blocks.{block_index}.ff"
     return {
         f"{prefix}.conv_inverted.weight": np.zeros((hidden_channels * 2, hidden_size, 1, 1), dtype=np.float32),
         f"{prefix}.conv_inverted.bias": np.zeros((hidden_channels * 2,), dtype=np.float32),

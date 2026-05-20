@@ -149,3 +149,28 @@ def test_verify_cli_block0_attention_writes_report(tmp_path):
     report = json.loads(output.read_text())
     assert report["status"] == "PASS"
     assert report["loaded_keys"]["count"] == 23
+
+
+def test_verify_cli_block_stack_writes_report(tmp_path):
+    snapshot = make_synthetic_snapshot(tmp_path / "snapshot", num_layers=2)
+    output = tmp_path / "block-stack.json"
+
+    code = main(
+        [
+            "block-stack",
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--dtype",
+            "float16",
+            "--block-count",
+            "2",
+        ]
+    )
+
+    assert code == 0
+    report = json.loads(output.read_text())
+    assert report["status"] == "PASS"
+    assert report["block_count"] == 2
+    assert report["loaded_keys"]["count"] == 46
