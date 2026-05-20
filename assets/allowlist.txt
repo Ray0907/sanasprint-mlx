@@ -1,1 +1,2 @@
+showcase-native-mlx-tiled-768.png
 showcase-reference-pipeline.png

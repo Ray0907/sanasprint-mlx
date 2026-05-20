@@ -33,4 +33,5 @@ build/
 # Curated README assets are intentionally committed.
 !assets/
 !assets/allowlist.txt
+!assets/showcase-native-mlx-tiled-768.png
 !assets/showcase-reference-pipeline.png

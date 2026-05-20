@@ -48,7 +48,10 @@ def test_hygiene_classifies_generated_images_outside_assets():
 
 
 def test_hygiene_classifies_unallowlisted_assets():
-    categories = categories_for(["assets/other.png", "assets/subdir/foo.png"], {"showcase-reference-pipeline.png"})
+    categories = categories_for(
+        ["assets/other.png", "assets/subdir/foo.png"],
+        {"showcase-native-mlx-tiled-768.png", "showcase-reference-pipeline.png"},
+    )
 
     assert categories["assets/other.png"] == {"unallowlisted_asset"}
     assert categories["assets/subdir/foo.png"] == {"unallowlisted_asset"}
@@ -56,8 +59,12 @@ def test_hygiene_classifies_unallowlisted_assets():
 
 def test_hygiene_allows_allowlisted_asset_and_allowlist_file():
     violations = classify_hygiene_violations(
-        ["assets/showcase-reference-pipeline.png", "assets/allowlist.txt"],
-        {"showcase-reference-pipeline.png"},
+        [
+            "assets/showcase-native-mlx-tiled-768.png",
+            "assets/showcase-reference-pipeline.png",
+            "assets/allowlist.txt",
+        ],
+        {"showcase-native-mlx-tiled-768.png", "showcase-reference-pipeline.png"},
     )
 
     assert violations == []
