@@ -126,6 +126,7 @@ def make_synthetic_snapshot(output_dir: str | Path) -> Path:
 def _synthetic_block_attention_tensors() -> dict[str, np.ndarray]:
     tensors = {}
     prefix = "transformer_blocks.0"
+    tensors[f"{prefix}.scale_shift_table"] = np.zeros((6, 4), dtype=np.float32)
     for attention in ("attn1", "attn2"):
         for projection in ("to_q", "to_k", "to_v", "to_out.0"):
             tensors[f"{prefix}.{attention}.{projection}.weight"] = np.eye(4, dtype=np.float32)

@@ -45,14 +45,22 @@ def run_block0_attention_smoke(
         seed=seed,
         sequence_length=sequence_length,
     )
-    output = np.array(block(hidden_states, encoder_hidden_states, encoder_attention_mask))
+    timestep_embedding = _timestep_embedding(summary.hidden_size, seed=seed)
+    output = np.array(
+        block(
+            hidden_states,
+            encoder_hidden_states,
+            encoder_attention_mask,
+            timestep_embedding=timestep_embedding,
+        )
+    )
     elapsed = time.perf_counter() - start
     finite = bool(np.isfinite(output).all())
     return {
         "status": "PASS" if finite else "FAIL",
         "snapshot_path": str(snapshot_path),
         "block_index": 0,
-        "scope": "attention_core_smoke_not_full_block_parity",
+        "scope": "attention_core_with_timestep_modulation_not_full_block_parity",
         "dtype": dtype,
         "seed": seed,
         "loaded_keys": {
@@ -66,6 +74,10 @@ def run_block0_attention_smoke(
             "embeds_dtype": str(encoder_hidden_states.dtype),
             "attention_mask_shape": list(encoder_attention_mask.shape),
             "attention_mask_dtype": str(encoder_attention_mask.dtype),
+        },
+        "timestep": {
+            "embedding_shape": list(timestep_embedding.shape),
+            "embedding_dtype": str(timestep_embedding.dtype),
         },
         "output": {
             "shape": list(output.shape),
@@ -93,6 +105,11 @@ def _prompt_inputs(
     prompt_embeds = rng.standard_normal((1, sequence_length, hidden_size), dtype=np.float32)
     prompt_attention_mask = np.ones((1, sequence_length), dtype=np.int32)
     return prompt_embeds, prompt_attention_mask
+
+
+def _timestep_embedding(hidden_size: int, *, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed + 13)
+    return rng.standard_normal((1, 6 * hidden_size), dtype=np.float32)
 
 
 def _mlx_dtype(dtype: str):

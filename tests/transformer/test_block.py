@@ -32,7 +32,7 @@ def test_toy_block_applies_encoder_mask():
 
 def real_attention_state(block_index=0, value=0.0):
     prefix = f"mlx_transformer.transformer_blocks.{block_index}"
-    state = {}
+    state = {f"{prefix}.scale_shift_table": np.zeros((6, 4), dtype=np.float32)}
     for attention in ("attn1", "attn2"):
         for projection in ("to_q", "to_k", "to_v", "to_out.0"):
             state[f"{prefix}.{attention}.{projection}.weight"] = np.eye(4, dtype=np.float32)
@@ -93,6 +93,38 @@ def test_real_sana_attention_block_matches_numpy_reference_with_asymmetric_weigh
     np.testing.assert_allclose(result, expected, atol=1e-4, rtol=1e-4)
 
 
+def test_real_sana_attention_block_applies_timestep_self_attention_modulation():
+    block = RealSanaAttentionBlock(
+        hidden_size=4,
+        num_attention_heads=2,
+        attention_head_dim=2,
+        num_cross_attention_heads=2,
+        cross_attention_head_dim=2,
+    )
+    state = real_attention_state()
+    state["mlx_transformer.transformer_blocks.0.scale_shift_table"] = (
+        np.arange(24, dtype=np.float32).reshape(6, 4) / 100.0
+    )
+    for index, key in enumerate(state):
+        if key.endswith(".weight") and "norm_" not in key:
+            state[key] = (np.arange(16, dtype=np.float32).reshape(4, 4) + index + 1) / 30.0
+        elif key.endswith(".bias"):
+            state[key] = (np.arange(4, dtype=np.float32) + index) / 60.0
+    block.load_parameters(state)
+    x = np.array([[[0.2, -0.4, 0.5, 0.7], [1.0, -0.1, 0.3, -0.2]]], dtype=np.float32)
+    encoder = np.array(
+        [[[0.3, -0.2, 0.9, 0.1], [1.1, 0.4, -0.5, 0.6], [-0.7, 0.8, 0.2, -0.3]]],
+        dtype=np.float32,
+    )
+    mask = np.array([[1, 0, 1]], dtype=np.int32)
+    timestep_embedding = np.arange(24, dtype=np.float32).reshape(1, 24) / 200.0
+
+    result = np.array(block(x, encoder, mask, timestep_embedding=timestep_embedding))
+    expected = _numpy_attention_block_reference(x, encoder, mask, state, timestep_embedding=timestep_embedding)
+
+    np.testing.assert_allclose(result, expected, atol=1e-4, rtol=1e-4)
+
+
 def test_real_sana_attention_block_rejects_incompatible_head_dimensions():
     with pytest.raises(ValueError, match="num_attention_heads"):
         RealSanaAttentionBlock(
@@ -101,6 +133,24 @@ def test_real_sana_attention_block_rejects_incompatible_head_dimensions():
             attention_head_dim=2,
             num_cross_attention_heads=2,
             cross_attention_head_dim=2,
+        )
+
+
+def test_real_sana_attention_block_rejects_bad_timestep_embedding_size():
+    block = RealSanaAttentionBlock(
+        hidden_size=4,
+        num_attention_heads=2,
+        attention_head_dim=2,
+        num_cross_attention_heads=2,
+        cross_attention_head_dim=2,
+    )
+
+    with pytest.raises(ValueError, match="timestep_embedding"):
+        block(
+            np.zeros((1, 2, 4), dtype=np.float32),
+            np.zeros((1, 2, 4), dtype=np.float32),
+            np.ones((1, 2), dtype=np.int32),
+            timestep_embedding=np.zeros((1, 23), dtype=np.float32),
         )
 
 
@@ -151,11 +201,20 @@ def test_block_attention_loader_rejects_missing_required_tensor(tmp_path):
         load_block_attention_weights_from_snapshot(block, snapshot, block_index=0)
 
 
-def _numpy_attention_block_reference(x, encoder, mask, state):
+def _numpy_attention_block_reference(x, encoder, mask, state, *, timestep_embedding=None):
     prefix = "mlx_transformer.transformer_blocks.0"
+    return _numpy_attention_block_reference_with_prefix(x, encoder, mask, state, prefix, timestep_embedding=timestep_embedding)
+
+
+def _numpy_attention_block_reference_with_prefix(x, encoder, mask, state, prefix, timestep_embedding):
     norm_x = _numpy_layer_norm(x)
+    gate_msa = None
+    if timestep_embedding is not None:
+        modulation = state[f"{prefix}.scale_shift_table"][None] + timestep_embedding.reshape(x.shape[0], 6, -1)
+        shift_msa, scale_msa, gate_msa = modulation[:, 0:1], modulation[:, 1:2], modulation[:, 2:3]
+        norm_x = norm_x * (1 + scale_msa) + shift_msa
     self_out = _numpy_self_attention(norm_x, state, f"{prefix}.attn1")
-    x = x + self_out
+    x = x + (gate_msa * self_out if gate_msa is not None else self_out)
     cross_out = _numpy_cross_attention(x, encoder, mask, state, f"{prefix}.attn2")
     return x + cross_out
 

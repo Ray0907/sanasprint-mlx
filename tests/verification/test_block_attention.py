@@ -12,9 +12,10 @@ def test_block0_attention_smoke_loads_synthetic_snapshot_weights(tmp_path):
 
     assert report["status"] == "PASS"
     assert report["block_index"] == 0
-    assert report["scope"] == "attention_core_smoke_not_full_block_parity"
+    assert report["scope"] == "attention_core_with_timestep_modulation_not_full_block_parity"
     assert report["prompt_source"] == "synthetic_projected_hidden_states"
-    assert report["loaded_keys"]["count"] == 17
+    assert report["loaded_keys"]["count"] == 18
+    assert report["timestep"]["embedding_shape"] == [1, 24]
     assert report["output"]["shape"] == [1, 3, 4]
     assert report["output"]["finite"] is True
     assert report["weights"]["source_tensors"]["mlx_transformer.transformer_blocks.0.attn1.to_q.weight"]["final_dtype"] == "float16"

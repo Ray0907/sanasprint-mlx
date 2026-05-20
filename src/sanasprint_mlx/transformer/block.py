@@ -78,11 +78,16 @@ class RealSanaAttentionBlock:
                 raise ValueError(f"{key}: expected shape {expected[key]}, got {tuple(tensor.shape)}")
             self._parameters[key] = tensor
 
-    def __call__(self, x, encoder_hidden_states, encoder_attention_mask=None):
+    def __call__(self, x, encoder_hidden_states, encoder_attention_mask=None, *, timestep_embedding=None):
         x = mx.array(x)
         encoder_hidden_states = mx.array(encoder_hidden_states)
-        self_output = self._self_attention(_layer_norm(x))
-        x = x + self_output
+        norm_x = _layer_norm(x)
+        gate_msa = None
+        if timestep_embedding is not None:
+            shift_msa, scale_msa, gate_msa = self._self_attention_modulation(timestep_embedding)
+            norm_x = norm_x * (1 + scale_msa) + shift_msa
+        self_output = self._self_attention(norm_x)
+        x = x + (gate_msa * self_output if gate_msa is not None else self_output)
         cross_output = self._cross_attention(x, encoder_hidden_states, encoder_attention_mask)
         return x + cross_output
 
@@ -130,6 +135,17 @@ class RealSanaAttentionBlock:
     def _prefix(self, attention_name: str) -> str:
         return f"mlx_transformer.transformer_blocks.{self.block_index}.{attention_name}"
 
+    def _self_attention_modulation(self, timestep_embedding):
+        timestep_embedding = mx.array(timestep_embedding)
+        batch = timestep_embedding.shape[0]
+        timestep_embedding = timestep_embedding.reshape(batch, -1)
+        expected_size = 6 * self.hidden_size
+        if timestep_embedding.shape[1] != expected_size:
+            raise ValueError(f"timestep_embedding must have {expected_size} values per batch item")
+        prefix = f"mlx_transformer.transformer_blocks.{self.block_index}"
+        modulation = self._parameters[f"{prefix}.scale_shift_table"][None] + timestep_embedding.reshape(batch, 6, self.hidden_size)
+        return modulation[:, 0:1], modulation[:, 1:2], modulation[:, 2:3]
+
 
 def _initial_attention_parameters(
     *,
@@ -142,7 +158,7 @@ def _initial_attention_parameters(
 ) -> dict[str, object]:
     del num_attention_heads, attention_head_dim, num_cross_attention_heads, cross_attention_head_dim
     prefix = f"mlx_transformer.transformer_blocks.{block_index}"
-    params = {}
+    params = {f"{prefix}.scale_shift_table": mx.zeros((6, hidden_size))}
     for attention in ("attn1", "attn2"):
         for projection in ("to_q", "to_k", "to_v", "to_out.0"):
             params[f"{prefix}.{attention}.{projection}.weight"] = mx.eye(hidden_size)
