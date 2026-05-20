@@ -11,6 +11,7 @@ from sanasprint_mlx.transformer.block import RealSanaAttentionBlock
 from sanasprint_mlx.transformer.block_weights import load_block_attention_weights_from_snapshot
 from sanasprint_mlx.transformer.config import SanaTransformerConfig
 from sanasprint_mlx.transformer.model import SanaTransformerDenoiser
+from sanasprint_mlx.transformer.output import SanaOutputNorm, load_output_norm_weights_from_snapshot
 from sanasprint_mlx.transformer.timestep import SanaTimestepGuidanceEmbedding, load_timestep_guidance_weights_from_snapshot
 from sanasprint_mlx.transformer.weights import load_scaffold_weights_from_snapshot
 from sanasprint_mlx.verification.block_attention import _grid_side
@@ -116,6 +117,14 @@ def run_real_block_denoise_smoke(
             }
         )
 
+    output_norm = SanaOutputNorm(summary.hidden_size)
+    output_norm_report = load_output_norm_weights_from_snapshot(
+        output_norm,
+        snapshot_path,
+        mlx_dtype=mlx_dtype,
+        strict=True,
+    )
+    x = output_norm(x, conditioning)
     out_tokens = mx.matmul(x, model.output_weight.T) + model.output_bias
     output = unpatchify_nchw(
         out_tokens,
@@ -132,6 +141,7 @@ def run_real_block_denoise_smoke(
     scaffold_count = len(scaffold_report["loaded_keys"])
     caption_count = len(scaffold_report["loaded_caption_keys"])
     time_embedding_count = len(time_report["loaded_keys"])
+    output_norm_count = len(output_norm_report["loaded_keys"])
     return {
         "status": "PASS" if finite else "FAIL",
         "snapshot_path": str(snapshot_path),
@@ -144,13 +154,16 @@ def run_real_block_denoise_smoke(
             "scaffold_count": scaffold_count,
             "caption_count": caption_count,
             "time_embedding_count": time_embedding_count,
+            "output_norm_count": output_norm_count,
             "block_count": block_loaded_count,
-            "total_count": scaffold_count + caption_count + time_embedding_count + block_loaded_count,
+            "total_count": scaffold_count + caption_count + time_embedding_count + output_norm_count + block_loaded_count,
         },
         "caption_projection_source": scaffold_report["caption_projection_source"],
         "time_embedding_source": time_report["source"],
+        "output_norm_source": output_norm_report["source"],
         "scaffold_weights": scaffold_report,
         "time_embedding_weights": time_report,
+        "output_norm_weights": output_norm_report,
         "blocks": block_reports,
         "prompt_source": prompt_report["source"],
         "prompt_cache": prompt_report.get("cache"),
