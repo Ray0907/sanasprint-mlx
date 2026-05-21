@@ -312,6 +312,33 @@ python3 -m venv .venv
 
 This path is intentionally labeled `--reference-pipeline`: it proves the project can run the SanaSprint model and write a PNG through Diffusers, and remains useful as a baseline for MLX-native comparisons.
 
+## Web UI
+
+The repository includes a functional local WebUI built with Next.js, React, Tailwind CSS v4, and a Python FastAPI backend. The Next.js API routes proxy to the Python backend; image generation still runs through the native MLX runtime.
+
+Install the Python web extra and frontend dependencies:
+
+```bash
+.venv/bin/python -m pip install -e ".[dev,web]"
+cd web/frontend
+npm install
+```
+
+Start the Python backend:
+
+```bash
+.venv/bin/python -m sanasprint_mlx.web.app
+```
+
+Start the Next.js frontend in another terminal:
+
+```bash
+cd web/frontend
+npm run dev
+```
+
+Open `http://localhost:3000`. The default model is `RayyTien/SanaSprint-0.6B-1024px-MLX`; the backend runs one generation job at a time and stores output images under `/tmp/sanasprint-mlx-web-outputs` unless `SANASPRINT_WEB_OUTPUT_DIR` is set.
+
 ## Text Encoding
 
 The text package provides a Diffusers-compatible prompt encoding path: Gemma-style tokenizer calls, selected-index handling, prompt embedding duplication, prompt cache read/write helpers, and native MLX Gemma2 hidden-state encoding through `mlx-lm`.

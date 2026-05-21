@@ -40,6 +40,10 @@ reference = [
 dev = [
   "pytest",
 ]
+web = [
+  "fastapi",
+  "uvicorn",
+]
 
 [project.urls]
 Homepage = "https://huggingface.co/Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers"
@@ -52,6 +56,7 @@ sanasprint-mlx-generate = "sanasprint_mlx.cli.generate:main"
 sanasprint-mlx-verify = "sanasprint_mlx.cli.verify:main"
 sanasprint-mlx-weights = "sanasprint_mlx.cli.weights:main"
 sanasprint-mlx-memory = "sanasprint_mlx.cli.memory:main"
+sanasprint-mlx-web = "sanasprint_mlx.web.app:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

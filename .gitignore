@@ -8,6 +8,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+/web/frontend/.next/
+/web/frontend/node_modules/
+/web/frontend/tsconfig.tsbuildinfo
+/web/outputs/
 /docs/
 /logs/
 *.log
